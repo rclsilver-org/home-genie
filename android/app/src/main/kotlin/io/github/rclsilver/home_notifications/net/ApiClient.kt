@@ -331,3 +331,14 @@ private fun <T> postJson(
         decode(text)
     }
 }
+
+/** A message's distribution timeline, oldest first. */
+suspend fun fetchTimeline(serverUrl: String, token: String, messageId: Long):
+    Result<List<TimelineEntryPayload>> = withContext(Dispatchers.IO) {
+    runCatching {
+        get(serverUrl, token, "/api/v1/messages/$messageId/timeline") { text ->
+            Json { ignoreUnknownKeys = true }
+                .decodeFromString(ListSerializer(TimelineEntryPayload.serializer()), text)
+        }
+    }
+}

@@ -101,3 +101,12 @@ data class CreateChannelRequest(
 
 @Serializable
 data class CreateTokenRequest(val name: String)
+
+/** One step in a message's life, for a user and a device. */
+@Serializable
+data class TimelineEntryPayload(
+    val kind: String,
+    val username: String = "",
+    val device: String = "",
+    val at: String = "",
+)

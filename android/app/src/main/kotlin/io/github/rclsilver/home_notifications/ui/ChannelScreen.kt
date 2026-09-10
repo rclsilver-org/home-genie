@@ -125,13 +125,18 @@ fun ChannelScreen(
 
     Text("Messages", style = MaterialTheme.typography.titleMedium)
     messages.forEach { message ->
-        MessageCard(message) {
-            scope.launch {
-                markRead(serverUrl, token, message.id)
-                fetchMessages(serverUrl, token, channel.id)
-                    .onSuccess { messages = it }
-            }
-        }
+        MessageCard(
+            message = message,
+            serverUrl = serverUrl,
+            token = token,
+            onRead = {
+                scope.launch {
+                    markRead(serverUrl, token, message.id)
+                    fetchMessages(serverUrl, token, channel.id)
+                        .onSuccess { messages = it }
+                }
+            },
+        )
     }
 }
 
@@ -162,7 +167,16 @@ private fun AlertCard(alert: AlertPayload, onAck: () -> Unit) {
 }
 
 @Composable
-private fun MessageCard(message: MessagePayload, onRead: () -> Unit) {
+private fun MessageCard(
+    message: MessagePayload,
+    serverUrl: String,
+    token: String,
+    onRead: () -> Unit,
+) {
+    // Collapsed by default: the timeline is a diagnostic tool, not something
+    // one wants to see on every message of the feed.
+    var showTimeline by remember(message.id) { mutableStateOf(false) }
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
@@ -185,9 +199,18 @@ private fun MessageCard(message: MessagePayload, onRead: () -> Unit) {
                         if (message.tags.isEmpty()) "" else " · " + message.tags.joinToString(", "),
                     style = MaterialTheme.typography.bodySmall,
                 )
-                if (!message.read) {
-                    TextButton(onClick = onRead) { Text("Lu") }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { showTimeline = !showTimeline }) {
+                        Text(if (showTimeline) "Hide" else "Distribution")
+                    }
+                    if (!message.read) {
+                        TextButton(onClick = onRead) { Text("Lu") }
+                    }
                 }
+            }
+
+            if (showTimeline) {
+                TimelinePanel(message.id, serverUrl, token)
             }
         }
     }
