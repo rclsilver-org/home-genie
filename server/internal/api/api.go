@@ -60,6 +60,9 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.Handle("GET /api/v1/channels/{id}/alerts", device(s.handleListAlerts))
 	mux.Handle("POST /api/v1/alerts/{id}/ack", device(s.handleAckAlert))
 
+	mux.Handle("GET /api/v1/channels/{id}/reminders", device(s.handleListReminderPolicies))
+	mux.Handle("PUT /api/v1/channels/{id}/reminders", device(s.handleSetReminderPolicy))
+
 	mux.Handle("GET /api/v1/ws", device(s.handleWS))
 
 	// Alertmanager posts here, authenticated like any other producer.

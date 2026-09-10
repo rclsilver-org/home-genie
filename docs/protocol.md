@@ -131,19 +131,90 @@ interpreted yet — it is ignored with a warning in the log rather than stored h
 understood. None of the producers to migrate uses it, and our own alerts set their
 actions natively in JSON.
 
-### `POST /api/v1/ingest/alertmanager/{channel}`
+The Alertmanager webhook has its own section below.
 
-Alertmanager v4 webhook. One alert entity per `fingerprint`, see the design.
 ## Client API
 
 - `GET /api/v1/channels/{id}/messages?limit=&before_id=` *(implemented)* — a channel's
   feed, newest first, paginated backwards with `before_id`
-- `GET /api/v1/alerts`, `POST /api/v1/alerts/{id}/ack`
 - `POST /api/v1/devices`
 
 The endpoints marked *(implemented)* above are available; the others land as step 1
 progresses.
 
+## Alertmanager alerts *(implemented)*
+
+### `POST /api/v1/ingest/alertmanager/{channel}`
+
+Alertmanager v4 webhook, authenticated by a **publish token** like any producer.
+Consumed directly rather than translated into an ntfy message: the payload carries the
+`fingerprint`, the full label set, the status and the timestamps — exactly what an
+entity with a lifecycle needs, and exactly what a translation destroys.
+
+Per alert received:
+
+| Case | Effect |
+|---|---|
+| `firing`, unknown fingerprint | Opening, message notified, first reminder scheduled |
+| `firing`, alert already open | **Silent refresh**, no message |
+| `resolved`, alert open | Closing, discreet resolution message |
+| `resolved`, never seen open | Ignored — one does not invent an alert in order to close it |
+
+The silent refresh is what makes it possible to keep `repeat_interval` at a
+**moderate** value on the Alertmanager side instead of neutralising it: the repeat
+becomes a free state resynchronisation after a restart, and not a second reminder
+engine. Verified against a real Alertmanager: three deliveries of the same alert, a
+single message.
+
+The same fingerprint firing again after a resolution opens a **new** entity, it does
+not resurrect the old one.
+
+The severity drives the priority: `critical` → 5, `warning` → 4, `info` → 2, the rest
+→ 3. A resolution goes out at priority 2 — good news arriving after having woken
+somebody up must not shout.
+
+### `GET /api/v1/channels/{id}/alerts?open=1`
+
+The channel's alerts, `open=1` restricting to those still open: this is the console.
+
+### `POST /api/v1/alerts/{id}/ack`
+
+**Purely local** acknowledgement. Nothing is written back to Alertmanager: the alert
+stays visible in the dashboards, and the phone never writes into the chain it watches.
+Acknowledging is not resolving — the alert stays `firing`, only its reminders stop.
+The author and the time are kept.
+
+## Reminders *(implemented)*
+
+Cadence **per severity, overridable per channel**: the most specific wins. No policy
+means no reminder — silence is the default, a channel only insists if it has been
+asked to.
+
+- `GET /api/v1/channels/{id}/reminders` — member; lists the channel's overrides and
+  the defaults it inherits, each marked `scope: channel` or `default`
+- `PUT /api/v1/channels/{id}/reminders` — `owner`; sets the channel's override
+
+```json
+{ "severity": "critical", "interval_seconds": 900,
+  "quiet_from": "23:00", "quiet_to": "07:00", "enabled": true }
+```
+
+**Quiet hours push back, they do not drop**: an unacknowledged alert resurfaces at the
+end of the window. Making the reminder disappear would turn a night setting into a way
+of losing an alert. The window may straddle midnight, which is the normal case. It is
+given whole or not at all: a half would silence at an unpredictable hour, so that is a
+`400`.
+
+Reminders are numbered in their title ("Reminder 2 — …"): a reminder identical to the
+original alert is indistinguishable from a duplicate, and gets swiped away as one.
+
+The scheduler **re-reads the database** every 15 s rather than holding timers in
+memory. Second-level precision is of no interest for a reminder; surviving a restart
+of the service is — an alert that went out at 3 a.m. must keep insisting even if the
+server was updated at 4.
+
+A failed send reschedules all the same: making an alert mute over a transient failure
+is the one result an alerting system must never produce.
 ## Reading and timeline *(implemented)*
 
 An information channel reads like **a shared RSS feed**: the message is single and
@@ -206,6 +277,7 @@ Frames:
 | `channel.created`, `channel.updated`, `channel.deleted` | yes | Channel changes |
 | `message.new` | yes | A message published on a channel one is a member of |
 | `messages.read` | yes | One of my other devices marked messages as read |
+| `alert.opened`, `alert.resolved`, `alert.acked` | yes | An alert's lifecycle |
 | `member.changed`, `member.removed` | yes | Membership changes |
 
 The heartbeat is an application frame and not a protocol ping, because the application

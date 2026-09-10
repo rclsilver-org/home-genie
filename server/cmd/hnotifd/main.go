@@ -23,6 +23,7 @@ import (
 	"github.com/rclsilver-org/home-notifications/server/internal/config"
 	"github.com/rclsilver-org/home-notifications/server/internal/db"
 	"github.com/rclsilver-org/home-notifications/server/internal/hub"
+	"github.com/rclsilver-org/home-notifications/server/internal/reminder"
 	"github.com/rclsilver-org/home-notifications/server/internal/store"
 	"github.com/rclsilver-org/home-notifications/server/internal/version"
 )
@@ -127,7 +128,8 @@ func runServer(args []string) error {
 			"`hnotifd admin create -username <name>`")
 	}
 
-	mux := api.New(repository, fanout, logger).Routes()
+	apiServer := api.New(repository, fanout, logger)
+	mux := apiServer.Routes()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		status := "ok"
@@ -152,6 +154,8 @@ func runServer(args []string) error {
 	// SIGTERM is what systemd sends on stop and restart.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	go reminder.New(repository, apiServer, logger).Run(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

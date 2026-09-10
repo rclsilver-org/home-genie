@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -171,6 +172,7 @@ func (s *Server) applyAlert(channel store.Channel, incoming alertmanagerAlert) a
 		return resultIgnored
 	}
 	s.announceAlert(channel, alert, eventAlertOpened)
+	s.scheduleFirstReminder(alert)
 	return resultOpened
 }
 
@@ -336,5 +338,50 @@ func toAlertPayload(alert store.Alert, slug string) alertPayload {
 		Labels: alert.Labels, Annotations: alert.Annotations,
 		GeneratorURL: alert.GeneratorURL, StartedAt: alert.StartedAt,
 		ResolvedAt: alert.ResolvedAt, AckedBy: alert.AckedByName, AckedAt: alert.AckedAt,
+	}
+}
+
+// RemindAlert re-notifies an alert nobody acknowledged. It satisfies
+// reminder.Notifier.
+func (s *Server) RemindAlert(alert store.Alert, count int) error {
+	channel, err := s.store.ChannelByID(alert.ChannelID)
+	if err != nil {
+		return err
+	}
+
+	alertID := alert.ID
+	message, err := s.store.CreateMessage(store.NewMessage{
+		ChannelID: channel.ID,
+		AlertID:   &alertID,
+		// The count is in the title on purpose: a reminder that looks
+		// exactly like the original is indistinguishable from a duplicate,
+		// and gets dismissed as one.
+		Title:    fmt.Sprintf("Rappel %d — %s", count, alert.Title()),
+		Body:     alert.Body(),
+		Priority: severityPriority(alert.Severity),
+		Tags:     append(alertTags(alert), "reminder"),
+		ClickURL: alert.GeneratorURL,
+	})
+	if err != nil {
+		return err
+	}
+
+	s.logger.Info("alert reminder", "alert_id", alert.ID, "count", count,
+		"channel", channel.Slug)
+	s.publishMessage(channel, message)
+	return nil
+}
+
+// scheduleFirstReminder arms the cadence when an alert opens. No policy
+// means no reminder — silence is the default, so a channel only insists
+// when somebody asked it to.
+func (s *Server) scheduleFirstReminder(alert store.Alert) {
+	policy, err := s.store.ReminderPolicyFor(alert.ChannelID, alert.Severity)
+	if err != nil || !policy.Reminds() {
+		return
+	}
+	next := policy.NextAfter(time.Now().UTC())
+	if err := s.store.SetNextReminder(alert.ID, &next, 0); err != nil {
+		s.logger.Error("scheduling the first reminder", "error", err, "alert_id", alert.ID)
 	}
 }
