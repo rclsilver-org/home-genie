@@ -37,6 +37,8 @@ import io.github.rclsilver.home_notifications.data.Settings
 import io.github.rclsilver.home_notifications.net.ApiClient
 import io.github.rclsilver.home_notifications.net.ChannelPayload
 import io.github.rclsilver.home_notifications.net.LoginRequest
+import io.github.rclsilver.home_notifications.net.CreateChannelRequest
+import io.github.rclsilver.home_notifications.net.createChannel
 import io.github.rclsilver.home_notifications.net.listChannels
 import io.github.rclsilver.home_notifications.net.markChannelRead
 import io.github.rclsilver.home_notifications.service.ConnectionService
@@ -293,6 +295,17 @@ private fun ChannelsSection(settings: Settings, onOpenChannel: (ChannelPayload) 
     }
 
     Text("Channels", style = MaterialTheme.typography.titleMedium)
+
+    NewChannelRow { slug ->
+        scope.launch {
+            createChannel(serverUrl, token, CreateChannelRequest(slug = slug))
+                .onSuccess {
+                    error = ""
+                    listChannels(serverUrl, token).onSuccess { channels = it }
+                }
+                .onFailure { error = it.message ?: "creation failed" }
+        }
+    }
     if (error.isNotEmpty()) {
         Text(error, color = MaterialTheme.colorScheme.error)
     }
@@ -331,5 +344,38 @@ private fun ChannelsSection(settings: Settings, onOpenChannel: (ChannelPayload) 
                 }
             }
         }
+    }
+}
+
+/**
+ * Creating a channel.
+ *
+ * The slug is the publish path, so it is constrained: lowercase letters,
+ * digits and dashes. The field filters as one types rather than letting the
+ * server refuse afterwards — the error is more useful before the request.
+ */
+@Composable
+private fun NewChannelRow(onCreate: (String) -> Unit) {
+    var slug by remember { mutableStateOf("") }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OutlinedTextField(
+            value = slug,
+            onValueChange = { entered ->
+                slug = entered.lowercase().filter { it.isLetterOrDigit() || it == '-' }
+            },
+            label = { Text("New channel") },
+            placeholder = { Text("mediacenter") },
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(
+            enabled = slug.isNotBlank(),
+            onClick = { onCreate(slug); slug = "" },
+        ) { Text("Create") }
     }
 }

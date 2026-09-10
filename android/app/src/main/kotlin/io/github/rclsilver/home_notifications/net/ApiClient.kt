@@ -247,3 +247,87 @@ suspend fun muteChannel(serverUrl: String, token: String, channelId: Long, until
         }
     }
 }
+
+/** Creates a channel; the caller becomes its owner. */
+suspend fun createChannel(serverUrl: String, token: String, request: CreateChannelRequest):
+    Result<ChannelPayload> = withContext(Dispatchers.IO) {
+    runCatching {
+        postJson(
+            serverUrl, token, "/api/v1/channels",
+            Json.encodeToString(CreateChannelRequest.serializer(), request),
+        ) { text ->
+            Json { ignoreUnknownKeys = true }
+                .decodeFromString(ChannelPayload.serializer(), text)
+        }
+    }
+}
+
+/** A channel's publish tokens, revoked ones included. */
+suspend fun fetchPublishTokens(serverUrl: String, token: String, channelId: Long):
+    Result<List<PublishTokenPayload>> = withContext(Dispatchers.IO) {
+    runCatching {
+        get(serverUrl, token, "/api/v1/channels/$channelId/tokens") { text ->
+            Json { ignoreUnknownKeys = true }
+                .decodeFromString(ListSerializer(PublishTokenPayload.serializer()), text)
+        }
+    }
+}
+
+/** Issues a publish token. The cleartext value comes back only here. */
+suspend fun createPublishToken(serverUrl: String, token: String, channelId: Long, name: String):
+    Result<PublishTokenPayload> = withContext(Dispatchers.IO) {
+    runCatching {
+        postJson(
+            serverUrl, token, "/api/v1/channels/$channelId/tokens",
+            Json.encodeToString(CreateTokenRequest.serializer(), CreateTokenRequest(name)),
+        ) { text ->
+            Json { ignoreUnknownKeys = true }
+                .decodeFromString(PublishTokenPayload.serializer(), text)
+        }
+    }
+}
+
+/** Revokes a token. Immediate: it stops resolving at once. */
+suspend fun revokePublishToken(serverUrl: String, token: String, channelId: Long, tokenId: Long):
+    Result<Unit> = withContext(Dispatchers.IO) {
+    runCatching {
+        val call = ApiClient.defaultClient().newCall(
+            Request.Builder()
+                .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId/tokens/$tokenId")
+                .delete()
+                .header("Authorization", "Bearer $token")
+                .build()
+        )
+        call.execute().use { response ->
+            if (!response.isSuccessful) throw IOException("HTTP error ${response.code}")
+        }
+    }
+}
+
+/** An authenticated JSON POST whose response is read. */
+private fun <T> postJson(
+    serverUrl: String,
+    token: String,
+    path: String,
+    payload: String,
+    decode: (String) -> T,
+): T {
+    val call = ApiClient.defaultClient().newCall(
+        Request.Builder()
+            .url("${serverUrl.trimEnd('/')}$path")
+            .post(payload.toRequestBodyJson())
+            .header("Authorization", "Bearer $token")
+            .build()
+    )
+    return call.execute().use { response ->
+        val text = response.body?.string().orEmpty()
+        if (!response.isSuccessful) {
+            val message = runCatching {
+                Json { ignoreUnknownKeys = true }
+                    .decodeFromString(ErrorResponse.serializer(), text).error
+            }.getOrElse { "HTTP error ${response.code}" }
+            throw IOException(message)
+        }
+        decode(text)
+    }
+}

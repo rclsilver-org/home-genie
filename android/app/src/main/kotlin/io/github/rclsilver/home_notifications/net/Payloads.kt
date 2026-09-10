@@ -74,3 +74,30 @@ data class ReminderPolicyPayload(
     val isOverride: Boolean get() = scope == "channel"
     val intervalMinutes: Int get() = intervalSeconds / 60
 }
+
+/**
+ * A publish token, the one a machine carries.
+ *
+ * [token] is only filled in at creation: the cleartext value is shown once,
+ * and the listing never shows it again.
+ */
+@Serializable
+data class PublishTokenPayload(
+    val id: Long,
+    val name: String = "",
+    @SerialName("last_used_at") val lastUsedAt: String? = null,
+    @SerialName("revoked_at") val revokedAt: String? = null,
+    val token: String = "",
+) {
+    val isRevoked: Boolean get() = revokedAt != null
+}
+
+@Serializable
+data class CreateChannelRequest(
+    val slug: String,
+    val name: String = "",
+    val description: String = "",
+)
+
+@Serializable
+data class CreateTokenRequest(val name: String)

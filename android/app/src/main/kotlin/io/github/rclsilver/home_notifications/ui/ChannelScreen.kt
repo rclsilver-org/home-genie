@@ -31,6 +31,9 @@ import io.github.rclsilver.home_notifications.net.fetchAlerts
 import io.github.rclsilver.home_notifications.net.fetchMessages
 import io.github.rclsilver.home_notifications.net.markChannelReadUpTo
 import io.github.rclsilver.home_notifications.net.markRead
+import io.github.rclsilver.home_notifications.net.muteChannel
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 import io.github.rclsilver.home_notifications.service.ConnectionService
 
 /**
@@ -114,7 +117,11 @@ fun ChannelScreen(
         Text("no message", style = MaterialTheme.typography.bodySmall)
     }
 
+    MuteRow(channel, serverUrl, token)
+
     RemindersSection(channel.id, serverUrl, token)
+
+    TokensSection(channel.id, channel.slug, serverUrl, token)
 
     Text("Messages", style = MaterialTheme.typography.titleMedium)
     messages.forEach { message ->
@@ -183,5 +190,49 @@ private fun MessageCard(message: MessagePayload, onRead: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+/**
+ * The channel's mute.
+ *
+ * A relative duration and not a date: "one hour" is what one wants during
+ * maintenance, and computing an instant by hand on a phone is a chore. The
+ * mute is an attribute of the channel, so it holds for all of its members —
+ * it is not a personal setting.
+ */
+@Composable
+private fun MuteRow(channel: ChannelPayload, serverUrl: String, token: String) {
+    val scope = rememberCoroutineScope()
+    var state by remember(channel.id) { mutableStateOf("") }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Mute", style = MaterialTheme.typography.titleMedium)
+        listOf(1L, 4L, 24L).forEach { hours ->
+            TextButton(onClick = {
+                scope.launch {
+                    val until = Instant.now().plus(hours, ChronoUnit.HOURS)
+                        .truncatedTo(ChronoUnit.SECONDS)
+                    muteChannel(serverUrl, token, channel.id, until.toString())
+                        .onSuccess { state = "muted for ${hours}h" }
+                        .onFailure { state = it.message ?: "failed" }
+                }
+            }) { Text("${hours}h") }
+        }
+        TextButton(onClick = {
+            scope.launch {
+                // An empty string lifts the mute, as the API wants.
+                muteChannel(serverUrl, token, channel.id, "")
+                    .onSuccess { state = "mute lifted" }
+                    .onFailure { state = it.message ?: "failed" }
+            }
+        }) { Text("Lever") }
+    }
+    if (state.isNotEmpty()) {
+        Text(state, style = MaterialTheme.typography.bodySmall)
     }
 }
