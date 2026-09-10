@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The default configuration, the one of the release variant: no cleartext
+  traffic. In production the server sits behind a reverse proxy terminating
+  TLS — accepting HTTP there would be a silent regression.
+
+  The debug variant overrides this file (src/debug/res/xml) so that one can
+  develop against a local server with no certificate.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

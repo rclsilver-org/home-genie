@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug variant only. A development server listens over HTTP on the LAN with
+  no certificate; without this override Android refuses the connection with
+  "CLEARTEXT communication not permitted by network security policy".
+
+  This file never reaches a release APK: the configuration in main/ takes over
+  and forbids cleartext.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
