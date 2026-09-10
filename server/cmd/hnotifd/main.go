@@ -1,8 +1,8 @@
 // Command hnotifd is the home-notifications server.
 //
-// Step 0 of the plan only wires the build chain: configuration loading, the
-// health endpoint and a clean shutdown. Channels, ingestion and the WebSocket
-// arrive in step 1.
+// Without a subcommand it runs the server. The `admin` subcommand creates
+// the local break-glass account, which has to be possible without a running
+// server and without the identity provider.
 package main
 
 import (
@@ -18,24 +18,67 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rclsilver-org/home-notifications/server/internal/api"
+	"github.com/rclsilver-org/home-notifications/server/internal/cli"
 	"github.com/rclsilver-org/home-notifications/server/internal/config"
 	"github.com/rclsilver-org/home-notifications/server/internal/db"
+	"github.com/rclsilver-org/home-notifications/server/internal/store"
 	"github.com/rclsilver-org/home-notifications/server/internal/version"
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := dispatch(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "hnotifd: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func dispatch(args []string) error {
+	if len(args) > 0 && args[0] == "admin" {
+		return runAdmin(args[1:])
+	}
+	return runServer(args)
+}
+
+// runAdmin implements `hnotifd admin create`.
+func runAdmin(args []string) error {
+	if len(args) == 0 || args[0] != "create" {
+		return errors.New("usage: hnotifd admin create -username <name> [-display-name <name>] [-config <file>]")
+	}
+
+	flags := flag.NewFlagSet("admin create", flag.ContinueOnError)
 	var (
-		configPath  = flag.String("config", config.DefaultConfigFile(), "path to the configuration file")
-		showVersion = flag.Bool("version", false, "print the version and exit")
+		configPath  = flags.String("config", config.DefaultConfigFile(), "path to the configuration file")
+		username    = flags.String("username", "", "login name of the account to create")
+		displayName = flags.String("display-name", "", "name shown in the application")
 	)
-	flag.Parse()
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+
+	handle, err := db.Open(cfg.Database)
+	if err != nil {
+		return err
+	}
+	defer handle.Close()
+
+	return cli.CreateAdmin(store.New(handle), *username, *displayName, os.Stdout)
+}
+
+func runServer(args []string) error {
+	flags := flag.NewFlagSet("hnotifd", flag.ContinueOnError)
+	var (
+		configPath  = flags.String("config", config.DefaultConfigFile(), "path to the configuration file")
+		showVersion = flags.Bool("version", false, "print the version and exit")
+	)
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
 
 	if *showVersion {
 		fmt.Println(version.String())
@@ -53,13 +96,13 @@ func run() error {
 
 	// Opening also migrates: the schema is brought up to date on every start,
 	// which is idempotent and keeps deployment down to installing the package.
-	store, err := db.Open(cfg.Database)
+	handle, err := db.Open(cfg.Database)
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer handle.Close()
 
-	schemaVersion, dirty, err := db.Version(store, cfg.Database)
+	schemaVersion, dirty, err := db.Version(handle, cfg.Database)
 	if err != nil {
 		return err
 	}
@@ -68,11 +111,18 @@ func run() error {
 	}
 	logger.Info("schema ready", "version", schemaVersion)
 
-	mux := http.NewServeMux()
+	repository := store.New(handle)
+
+	if count, err := repository.CountUsers(); err == nil && count == 0 {
+		logger.Warn("no account exists yet; create the break-glass one with " +
+			"`hnotifd admin create -username <name>`")
+	}
+
+	mux := api.New(repository, logger).Routes()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		status := "ok"
-		if err := store.PingContext(r.Context()); err != nil {
+		if err := handle.PingContext(r.Context()); err != nil {
 			status = "degraded"
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}
