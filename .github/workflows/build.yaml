@@ -1,0 +1,204 @@
+name: Build the packages
+on:
+  push:
+    branches:
+      - master
+      - 'wip/**'
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+
+    # Builds and uploads artifacts, nothing more — and it is the job that runs
+    # a third-party action, so it gets no token that could write to the repo.
+    # Only the release job below is granted that.
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: ${{ !startsWith(github.ref, 'refs/tags/v') && 20 || 1 }}
+          fetch-tags: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.24'
+
+      - name: Generate the version
+        id: version
+        run: echo "value=$(./generate-version.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Vet
+        run: make vet
+
+      # The runner has a C compiler, so the race detector is usable here even
+      # though `make test` stays cgo-free for the development machine.
+      - name: Run the tests
+        run: make test-race
+
+      - name: Build the binaries
+        run: |
+          DEFAULT_CONF_FILE=/etc/home-notifications/config.yaml \
+          DEFAULT_DB_FILE=/var/lib/home-notifications/hnotifd.db \
+            make binaries
+
+      - name: Prepare the package roots
+        run: |
+          mkdir -p debian/usr/bin
+          mkdir -p debian/etc/home-notifications
+          cp config.example.yaml debian/etc/home-notifications/config.yaml
+
+          for arch in amd64 arm64; do
+              cp -R debian .debpkg-${arch}
+              cp dist/hnotifd-linux-${arch} .debpkg-${arch}/usr/bin/hnotifd
+              chmod 0755 .debpkg-${arch}/usr/bin/hnotifd
+          done
+
+      # Third-party actions are pinned to a commit rather than a tag: a tag
+      # can be repointed at malicious code after review, a commit cannot.
+      - name: Build the amd64 package
+        id: build_deb_amd64
+        uses: jiro4989/build-deb-action@6fd859b1fa14f611f462f031d7a07a845b8155c6 # v3
+        with:
+          package: home-notifications
+          package_root: .debpkg-amd64
+          maintainer: Thomas Bétrancourt <thomas@betrancourt.net>
+          version: ${{ steps.version.outputs.value }}
+          arch: 'amd64'
+          desc: 'home-notifications server (hnotifd)'
+          homepage: 'https://github.com/rclsilver-org/home-notifications'
+
+      - name: Build the arm64 package
+        id: build_deb_arm64
+        uses: jiro4989/build-deb-action@6fd859b1fa14f611f462f031d7a07a845b8155c6 # v3
+        with:
+          package: home-notifications
+          package_root: .debpkg-arm64
+          maintainer: Thomas Bétrancourt <thomas@betrancourt.net>
+          version: ${{ steps.version.outputs.value }}
+          arch: 'arm64'
+          desc: 'home-notifications server (hnotifd)'
+          homepage: 'https://github.com/rclsilver-org/home-notifications'
+
+      - name: Upload the artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: server
+          path: |
+            dist/hnotifd-linux-amd64
+            dist/hnotifd-linux-arm64
+            ${{ steps.build_deb_amd64.outputs.file_name }}
+            ${{ steps.build_deb_arm64.outputs.file_name }}
+
+
+  android:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: ${{ !startsWith(github.ref, 'refs/tags/v') && 20 || 1 }}
+          fetch-tags: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Set up the JDK
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # buildToolsVersion is pinned in android/app/build.gradle.kts, so the
+      # matching package must be present rather than left to the runner image.
+      - name: Set up the Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+        with:
+          packages: 'platforms;android-36 build-tools;36.0.0'
+
+      # No Gradle wrapper is committed: generating gradle-wrapper.jar needs a
+      # local Gradle, and the development machine gets its SDK from an
+      # ephemeral nix-shell (see README). Gradle is pinned here instead.
+      - name: Set up Gradle
+        # v5 and not v6: v6 moves the caching into a closed-source library, and
+        # this project keeps its dependencies inspectable. v5 is the same action
+        # on Node 24.
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
+        with:
+          gradle-version: '8.14.3'
+
+      # `make apk` owns the flags. The aapt2 override it can add only triggers
+      # when ANDROID_HOME points into a nix store, so it stays inert here.
+      - name: Build the debug APK
+        run: make apk
+
+      - name: Upload the APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: android
+          path: android/app/build/outputs/apk/debug/*.apk
+  release:
+    needs: [server, android]
+    # Deliberately narrower than the push trigger: every branch builds and
+    # tests, only a tag publishes. A release is a decision, so it is made by
+    # tagging and never as a side effect of merging.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      # This job only ever runs on a tag, so the tag itself is enough for
+      # generate-version.sh to describe it: no history and no other tags needed.
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Generate the version
+        id: version
+        run: echo "value=$(./generate-version.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Download the artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      # Published with the gh CLI rather than a third-party action: this job
+      # holds a token that can write releases, and an action pinned to a tag
+      # could be repointed at code that reads it. gh ships with the runner.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          # download-artifact preserves the uploaded layout, so artifacts/server
+          # holds a dist/ directory beside the .deb files — and gh refuses a
+          # directory as an asset. Hence globs that can only match files.
+          binaries=(artifacts/server/dist/hgenied-linux-*)
+          packages=(artifacts/server/*.deb)
+          apks=(artifacts/android/*.apk)
+
+          # An empty group means a build produced nothing while still reporting
+          # success. Publishing a release missing half its assets would look
+          # like a release.
+          if [ ${#binaries[@]} -eq 0 ] || [ ${#packages[@]} -eq 0 ] || [ ${#apks[@]} -eq 0 ]; then
+              echo "incomplete artifacts: ${#binaries[@]} binaries," \
+                   "${#packages[@]} packages, ${#apks[@]} apks" >&2
+              exit 1
+          fi
+
+          gh release create "${GITHUB_REF#refs/tags/}" --verify-tag \
+              --title "${{ steps.version.outputs.value }}" \
+              "${binaries[@]}" "${packages[@]}" "${apks[@]}"

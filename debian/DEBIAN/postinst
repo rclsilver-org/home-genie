@@ -1,0 +1,46 @@
+#!/bin/sh
+
+set -e
+
+case "$1" in
+    configure)
+        if ! getent group home-notifications >/dev/null; then
+            addgroup --system home-notifications
+        fi
+
+        # Created before adduser, otherwise adduser warns about a home
+        # directory it cannot reach on every fresh install.
+        mkdir -p /var/lib/home-notifications
+
+        if ! getent passwd home-notifications >/dev/null; then
+            adduser --system --ingroup home-notifications              \
+                    --home /var/lib/home-notifications --no-create-home \
+                    --gecos "home-notifications server"                 \
+                    home-notifications
+        fi
+
+        chown home-notifications:home-notifications /var/lib/home-notifications
+        chmod 0750 /var/lib/home-notifications
+
+        # Whatever credentials the configuration may one day carry are for
+        # the service to read, not for everyone.
+        if [ -f /etc/home-notifications/config.yaml ]; then
+            chown root:home-notifications /etc/home-notifications/config.yaml
+            chmod 0640 /etc/home-notifications/config.yaml
+        fi
+        ;;
+esac
+
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+    systemctl enable home-notifications.service || true
+
+    # Restart on upgrade only. On a fresh install the shipped configuration is
+    # still a template, and configuration management owns the service state, so
+    # starting here would only produce a failing unit.
+    if [ "$1" = "configure" ] && [ -n "$2" ]; then
+        systemctl try-restart home-notifications.service || true
+    fi
+fi
+
+exit 0

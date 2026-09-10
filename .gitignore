@@ -1,0 +1,32 @@
+# Build output
+dist/
+.version
+.debpkg-*/
+*.deb
+
+# Go
+*.test
+*.out
+go.work
+go.work.sum
+
+# Local runtime files
+/config.yaml
+/hnotifd.db
+/hnotifd.db-shm
+/hnotifd.db-wal
+
+# Generated at build time from config.example.yaml
+debian/etc/
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
+*.keystore
+
+# Editors
+.idea/
+.vscode/

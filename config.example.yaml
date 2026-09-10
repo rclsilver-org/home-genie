@@ -1,0 +1,14 @@
+# Listen address.
+#   production  : 127.0.0.1:8080 — a reverse proxy terminates TLS in front.
+#   development : 0.0.0.0:8080   — so a phone reaches it over the LAN.
+listen: "127.0.0.1:8080"
+
+# The URL reachable from outside. Used to build the links sent in
+# notifications and the OIDC redirect URI.
+base_url: "https://genie.example.net"
+
+# SQLite file. The package places it in the systemd unit's StateDirectory.
+database: "/var/lib/home-notifications/hnotifd.db"
+
+# debug, info, warn, error
+log_level: "info"

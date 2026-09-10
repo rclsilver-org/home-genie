@@ -1,0 +1,6 @@
+Package: home-notifications
+Section: net
+Priority: optional
+Depends: adduser
+Maintainer: rclsilver
+Description: https://github.com/rclsilver-org/home-notifications
