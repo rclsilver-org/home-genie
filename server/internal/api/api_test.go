@@ -12,10 +12,17 @@ import (
 
 	"github.com/rclsilver-org/home-notifications/server/internal/auth"
 	"github.com/rclsilver-org/home-notifications/server/internal/db"
+	"github.com/rclsilver-org/home-notifications/server/internal/hub"
 	"github.com/rclsilver-org/home-notifications/server/internal/store"
 )
 
 func newTestServer(t *testing.T) (*Server, *store.Store) {
+	server, repository, _ := newTestServerWithHub(t)
+	return server, repository
+}
+
+// newTestServerWithHub also hands back the fanout, for the socket tests.
+func newTestServerWithHub(t *testing.T) (*Server, *store.Store, *hub.Hub) {
 	t.Helper()
 	handle, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -24,8 +31,9 @@ func newTestServer(t *testing.T) (*Server, *store.Store) {
 	t.Cleanup(func() { handle.Close() })
 
 	repository := store.New(handle)
+	fanout := hub.New()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(repository, logger), repository
+	return New(repository, fanout, logger), repository, fanout
 }
 
 // withLocalAccount creates the break-glass account with a known password.

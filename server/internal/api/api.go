@@ -8,18 +8,20 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/rclsilver-org/home-notifications/server/internal/hub"
 	"github.com/rclsilver-org/home-notifications/server/internal/store"
 )
 
 // Server carries what the handlers need.
 type Server struct {
 	store  *store.Store
+	hub    *hub.Hub
 	logger *slog.Logger
 }
 
 // New builds the HTTP surface.
-func New(s *store.Store, logger *slog.Logger) *Server {
-	return &Server{store: s, logger: logger}
+func New(s *store.Store, h *hub.Hub, logger *slog.Logger) *Server {
+	return &Server{store: s, hub: h, logger: logger}
 }
 
 // Routes returns the mux serving the API.
@@ -48,6 +50,8 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.Handle("GET /api/v1/channels/{id}/tokens", device(s.handleListTokens))
 	mux.Handle("POST /api/v1/channels/{id}/tokens", device(s.handleCreateToken))
 	mux.Handle("DELETE /api/v1/channels/{id}/tokens/{tokenID}", device(s.handleRevokeToken))
+
+	mux.Handle("GET /api/v1/ws", device(s.handleWS))
 
 	return mux
 }

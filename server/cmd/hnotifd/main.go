@@ -22,6 +22,7 @@ import (
 	"github.com/rclsilver-org/home-notifications/server/internal/cli"
 	"github.com/rclsilver-org/home-notifications/server/internal/config"
 	"github.com/rclsilver-org/home-notifications/server/internal/db"
+	"github.com/rclsilver-org/home-notifications/server/internal/hub"
 	"github.com/rclsilver-org/home-notifications/server/internal/store"
 	"github.com/rclsilver-org/home-notifications/server/internal/version"
 )
@@ -113,12 +114,20 @@ func runServer(args []string) error {
 
 	repository := store.New(handle)
 
+	// No socket survives a restart, so a leftover marker would make the
+	// reliability figures lie.
+	if err := repository.DisconnectAllDevices(); err != nil {
+		return err
+	}
+
+	fanout := hub.New()
+
 	if count, err := repository.CountUsers(); err == nil && count == 0 {
 		logger.Warn("no account exists yet; create the break-glass one with " +
 			"`hnotifd admin create -username <name>`")
 	}
 
-	mux := api.New(repository, logger).Routes()
+	mux := api.New(repository, fanout, logger).Routes()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		status := "ok"

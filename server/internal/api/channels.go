@@ -86,6 +86,7 @@ func (s *Server) handleCreateChannel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.logger.Info("channel created", "slug", channel.Slug, "owner", user.Username)
+	s.publishToChannel(channel.ID, store.EventChannelCreated, toChannelPayload(channel, store.RoleOwner))
 	s.writeJSON(w, http.StatusCreated, toChannelPayload(channel, store.RoleOwner))
 }
 
@@ -144,6 +145,7 @@ func (s *Server) handleUpdateChannel(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.publishToChannel(updated.ID, store.EventChannelUpdated, toChannelPayload(updated, ""))
 	s.writeJSON(w, http.StatusOK, toChannelPayload(updated, store.RoleOwner))
 }
 
@@ -153,11 +155,23 @@ func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The members have to be read before the delete: the cascade removes
+	// them, and afterwards there would be nobody left to notify.
+	members, err := s.store.MemberUserIDs(channel.ID)
+	if err != nil {
+		s.logger.Error("listing the members", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
 	if err := s.store.DeleteChannel(channel.ID); err != nil {
 		s.logger.Error("deleting the channel", "error", err)
 		s.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+
+	s.publishToUsers(members, store.EventChannelDeleted,
+		map[string]any{"id": channel.ID, "slug": channel.Slug})
 
 	s.logger.Info("channel deleted", "slug", channel.Slug)
 	w.WriteHeader(http.StatusNoContent)
@@ -226,12 +240,18 @@ func (s *Server) handleSetMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, memberPayload{
+	payload := memberPayload{
 		UserID:      target.ID,
 		Username:    target.Username,
 		DisplayName: target.DisplayName,
 		Role:        string(role),
+	}
+	// Published after the membership exists, so the new member is among the
+	// recipients and learns about the channel they just gained access to.
+	s.publishToChannel(channel.ID, store.EventMemberChanged, map[string]any{
+		"channel_id": channel.ID, "member": payload,
 	})
+	s.writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
@@ -265,6 +285,16 @@ func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+
+	// The removed user is no longer a member, so they would not be in the
+	// fanout: they are told separately, otherwise their app would keep
+	// showing a channel they can no longer read.
+	s.publishToChannel(channel.ID, store.EventMemberRemoved, map[string]any{
+		"channel_id": channel.ID, "user_id": target.ID, "username": target.Username,
+	})
+	s.publishToUsers([]int64{target.ID}, store.EventMemberRemoved, map[string]any{
+		"channel_id": channel.ID, "user_id": target.ID, "username": target.Username,
+	})
 
 	w.WriteHeader(http.StatusNoContent)
 }

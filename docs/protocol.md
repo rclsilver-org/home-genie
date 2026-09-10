@@ -113,12 +113,44 @@ Alertmanager v4 webhook. One alert entity per `fingerprint`.
 The endpoints marked *(implemented)* above are available; the others land as step 1
 progresses.
 
-## WebSocket
+## WebSocket *(implemented)*
 
-`GET /api/v1/ws?since_seq=N` — a replay of everything after `since_seq`, then real
-time. A periodic heartbeat to detect a socket that is dead but not closed.
+`GET /api/v1/ws?since_seq=N`, authenticated by the device token in the `Authorization`
+header — the clients are native applications, not browsers.
 
-## Divers
+On connection the server **replays everything after `since_seq`**, then sends a `ready`
+frame carrying the last `seq`, then switches to real time. This is the contract that
+makes an aggressive Android power manager survivable: a socket killed by the system
+costs a reconnection and a delay, never a lost event. The subscription is taken
+**before** the replay, so that an event occurring during the catch-up is queued rather
+than lost in the gap.
+
+Frames:
+
+| `kind` | `seq` | Role |
+|---|---|---|
+| `ready` | last known | The catch-up is over |
+| `heartbeat` | — | **Application-level** proof of life, every 30 s |
+| `channel.created`, `channel.updated`, `channel.deleted` | yes | Channel changes |
+| `member.changed`, `member.removed` | yes | Membership changes |
+
+The heartbeat is an application frame and not a protocol ping, because the application
+has to **see** it: a socket the system silently froze stays open as far as the OS is
+concerned, and only a missing heartbeat reveals it. This is what the diagnostics
+screen reads.
+
+An event is **recorded before being broadcast**. A socket that misses the broadcast
+will replay it; an event only sent live would be lost for good.
+
+A subscriber whose buffer is full is **disconnected** rather than waited for: it
+reconnects and replays. Blocking the sender would let a single stuck phone delay the
+whole server.
+
+An open socket marks its device connected; this is what will make a delivery to a
+device with no socket accountable. The markers are reset at startup: no socket
+survives a restart, and a stale marker would skew the figures.
+
+## Miscellaneous
 
 - `GET /healthz` — status and build identity
 - `GET /metrics` — Prometheus format (step 1)
