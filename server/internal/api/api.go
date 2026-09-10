@@ -51,7 +51,14 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.Handle("POST /api/v1/channels/{id}/tokens", device(s.handleCreateToken))
 	mux.Handle("DELETE /api/v1/channels/{id}/tokens/{tokenID}", device(s.handleRevokeToken))
 
+	mux.Handle("GET /api/v1/channels/{id}/messages", device(s.handleListMessages))
+
 	mux.Handle("GET /api/v1/ws", device(s.handleWS))
+
+	// Producer path. Registered last and at the root, where ntfy puts it:
+	// the more specific /api/... patterns win under Go 1.22 routing, and
+	// reserved slugs keep a channel from ever shadowing them.
+	mux.Handle("POST /{slug}", s.requirePublishToken(http.HandlerFunc(s.handleIngestNtfy)))
 
 	return mux
 }

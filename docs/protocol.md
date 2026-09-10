@@ -93,18 +93,51 @@ does not publish on behalf of a producer.
 
 ## Ingest
 
-### `POST /{canal}` — compatible ntfy
+### `POST /{slug}` — ntfy compatible *(implemented)*
 
-Accepts both ntfy shapes: a plain text body with headers (`Title`, `Priority`, `Tags`,
-`Click`, `Actions`) or a JSON body. This is the path of the existing producers.
+Authenticated by a **publish token** (`Authorization: Bearer hnp_…`), which is only
+valid for one channel. This is what makes it possible to switch the media tools and
+the image watcher over by changing only a URL and a token.
+
+Two shapes, like ntfy:
+
+**Plain text body + headers.** Every header accepts ntfy's spellings:
+`Title` / `X-Title` / `t`, `Priority` / `X-Priority` / `prio` / `p`,
+`Tags` / `X-Tags` / `ta`, `Click` / `X-Click`.
+
+```sh
+curl -H "Authorization: Bearer hnp_…" \
+     -H "Title: Sonarr" -H "Priority: high" -H "Tags: movie,download" \
+     -d "Dune has been downloaded" https://example.invalid/mediacenter
+```
+
+**JSON body** (`Content-Type: application/json`) with `title`, `message`, `priority`,
+`tags`, `click`, `actions`. Headers win over the body, as they do in ntfy.
+
+`priority` accepts names (`min`, `low`, `default`, `high`, `max`, `urgent`) and the
+numbers 1 to 5. A value out of range or unreadable falls back to `default` rather than
+failing the notification — losing an alert over a typo would be worse.
+
+If the JSON body carries a `topic`, it must match the slug in the URL: a misconfigured
+producer fails with `400` instead of publishing to the channel its token owns.
+
+A message with neither title **nor** body is refused with `400`.
+
+The response mimics ntfy's (`id`, `time`, `event`, `topic`, `title`, `message`,
+`priority`, `tags`) so that a producer reading it is not surprised.
+
+**Known limitation:** ntfy's `Actions` header, in its compact syntax, is not
+interpreted yet — it is ignored with a warning in the log rather than stored half
+understood. None of the producers to migrate uses it, and our own alerts set their
+actions natively in JSON.
 
 ### `POST /api/v1/ingest/alertmanager/{channel}`
 
-Alertmanager v4 webhook. One alert entity per `fingerprint`.
+Alertmanager v4 webhook. One alert entity per `fingerprint`, see the design.
+## Client API
 
-## API cliente
-
-- `GET /api/v1/messages`
+- `GET /api/v1/channels/{id}/messages?limit=&before_id=` *(implemented)* — a channel's
+  feed, newest first, paginated backwards with `before_id`
 - `POST /api/v1/messages/{id}/read`, `POST /api/v1/channels/{id}/read?up_to_seq=N`
 - `GET /api/v1/messages/{id}/timeline`
 - `GET /api/v1/alerts`, `POST /api/v1/alerts/{id}/ack`
@@ -132,6 +165,7 @@ Frames:
 | `ready` | last known | The catch-up is over |
 | `heartbeat` | — | **Application-level** proof of life, every 30 s |
 | `channel.created`, `channel.updated`, `channel.deleted` | yes | Channel changes |
+| `message.new` | yes | A message published on a channel one is a member of |
 | `member.changed`, `member.removed` | yes | Membership changes |
 
 The heartbeat is an application frame and not a protocol ping, because the application
