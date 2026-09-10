@@ -163,9 +163,6 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			}); err != nil {
 				return
 			}
-			if err := s.store.TouchDevice(device.ID); err != nil {
-				s.logger.Warn("updating the device", "error", err, "device_id", device.ID)
-			}
 		}
 	}
 }
@@ -236,18 +233,29 @@ type clientFrame struct {
 	Seq  int64  `json:"seq"`
 }
 
-const frameAck = "ack"
+const (
+	frameAck  = "ack"
+	framePong = "pong"
+)
 
 // handleClientFrame interprets an acknowledgement. It is what turns a
 // "sent" into a "delivered" and therefore what makes a miss detectable: a
 // message written to a socket that the device never confirms is exactly the
 // silent failure this whole design is built around.
 func (s *Server) handleClientFrame(userID, deviceID int64, data []byte) {
+	// Anything coming from the client proves the socket is alive in the
+	// direction that matters. The server's own heartbeat proves nothing:
+	// writing into a wedged socket succeeds for a long time.
+	if err := s.store.TouchDevice(deviceID); err != nil {
+		s.logger.Warn("updating the device", "error", err, "device_id", deviceID)
+	}
+
 	var incoming clientFrame
 	if err := json.Unmarshal(data, &incoming); err != nil {
 		s.logger.Warn("unreadable client frame", "device_id", deviceID)
 		return
 	}
+	// A pong carries no delivery, only liveness — already recorded above.
 	if incoming.Kind != frameAck || incoming.Seq <= 0 {
 		return
 	}

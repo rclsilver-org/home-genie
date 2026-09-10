@@ -362,6 +362,45 @@ func timelineCount(t *testing.T, s *store.Store, messageID int64, kind string) i
 	return count
 }
 
+// last_seen_at must reflect what the server *receives*, never what it
+// sends: writing into a socket the system has wedged succeeds for a long
+// time, so a server-side heartbeat proves nothing. This is the property the
+// overnight reliability test rests on.
+func TestLastSeenFollowsInboundFramesOnly(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+
+	httpServer := httptest.NewServer(server.Routes())
+	t.Cleanup(httpServer.Close)
+
+	token := session(t, server, "thomas", testPassword)
+	conn := dial(t, httpServer.URL, token, 0)
+	readUntil(t, conn, frameReady)
+
+	devices, err := repository.DevicesByUser(1)
+	if err != nil || len(devices) == 0 {
+		t.Fatalf("devices = %+v err = %v", devices, err)
+	}
+	before := devices[0].LastSeenAt
+
+	// A pong carries no delivery, only liveness.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	payload, _ := json.Marshal(clientFrame{Kind: framePong})
+	if err := conn.Write(ctx, websocket.MessageText, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, func() bool {
+		refreshed, err := repository.DevicesByUser(1)
+		if err != nil || len(refreshed) == 0 || refreshed[0].LastSeenAt == nil {
+			return false
+		}
+		return before == nil || refreshed[0].LastSeenAt.After(*before) ||
+			refreshed[0].LastSeenAt.Equal(*before)
+	}, "an inbound frame did not refresh last_seen_at")
+}
+
 // The bug seen after a night of running: the client reconnects before the
 // server has noticed the old socket died, and closing the dying one erased
 // the marker its replacement had just set. The device then looked offline

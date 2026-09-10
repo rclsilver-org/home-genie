@@ -161,6 +161,12 @@ class ConnectionService : LifecycleService() {
                         heartbeats = state.value.heartbeats + 1,
                     )
                 )
+                // Answering is the only thing that proves to the server that
+                // the socket is alive in this direction: writing into a frozen
+                // socket succeeds for a long time while nothing arrives.
+                if (send?.invoke("""{"kind":"pong","seq":0}""") != true) {
+                    Log.w(TAG, "pong not sent")
+                }
                 return
             }
 
