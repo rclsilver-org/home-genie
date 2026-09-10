@@ -1,0 +1,11 @@
+DROP TABLE IF EXISTS events;
+DROP TABLE IF EXISTS reminder_policies;
+DROP TABLE IF EXISTS message_reads;
+DROP TABLE IF EXISTS message_events;
+DROP TABLE IF EXISTS messages;
+DROP TABLE IF EXISTS alerts;
+DROP TABLE IF EXISTS publish_tokens;
+DROP TABLE IF EXISTS channel_members;
+DROP TABLE IF EXISTS channels;
+DROP TABLE IF EXISTS devices;
+DROP TABLE IF EXISTS users;

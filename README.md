@@ -12,18 +12,30 @@ and answers on `/healthz`; the channels, the ingest and the WebSocket land at st
 
 ## Serveur
 
+Development happens in a nix shell, which provides **Go 1.25** — and not the nixpkgs
+default 1.24, because `modernc.org/sqlite` requires it. Going through Go's automatic
+toolchain mechanism would download a version from outside nixpkgs on every clean build.
+
 ```sh
+nix-shell
 make            # binary for the current platform, in dist/
 make binaries   # linux/amd64 + linux/arm64
-make test       # tests
-make test-race  # tests with the race detector — needs a C compiler
+make test
+make test-race  # with the race detector (needs cgo, hence gcc)
 make vet
 make version
 ```
 
 `CGO_ENABLED=0` is enforced so that cross-compiling to arm64 needs no toolchain.
 **A consequence not to work around**: the SQLite driver has to be the pure-Go
-`modernc.org/sqlite`, never `mattn/go-sqlite3`.
+`modernc.org/sqlite`, never `mattn/go-sqlite3`. Same rule for the migrations, which use
+golang-migrate's `sqlite` driver and not its `sqlite3`.
+
+`golang-migrate` is held at v4.19.1: v4.20.1 requires Go ≥ 1.25.11, which nixpkgs 25.05
+does not provide. The reason is written down in `go.mod` so that nobody undoes it by
+mistake.
+
+The shell's `gcc` only serves the race detector; the shipped binaries stay CGO-free.
 
 To run it locally:
 
@@ -33,7 +45,9 @@ cp config.example.yaml config.yaml
 ./dist/hnotifd-linux-amd64 -config config.yaml
 ```
 
-## Application Android
+The SQLite database is created and migrated at startup; `/healthz` returns the schema
+version and switches to 503 if the database becomes unreachable.
+## Android application
 
 The SDK is provisioned by `androidenv`, in an **ephemeral shell**: nothing is installed
 on the system, the SDK is realised in `/nix/store` and the variables exist only inside

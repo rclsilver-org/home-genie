@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/rclsilver-org/home-notifications/server/internal/config"
+	"github.com/rclsilver-org/home-notifications/server/internal/db"
 	"github.com/rclsilver-org/home-notifications/server/internal/version"
 )
 
@@ -48,15 +49,38 @@ func run() error {
 
 	logger := newLogger(cfg.LogLevel)
 	logger.Info("starting", "version", version.Version(), "commit", version.Commit(),
-		"listen", cfg.Listen, "database", cfg.Database)
+		"listen", cfg.Listen, "database", db.Path(cfg.Database))
+
+	// Opening also migrates: the schema is brought up to date on every start,
+	// which is idempotent and keeps deployment down to installing the package.
+	store, err := db.Open(cfg.Database)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	schemaVersion, dirty, err := db.Version(store, cfg.Database)
+	if err != nil {
+		return err
+	}
+	if dirty {
+		return fmt.Errorf("the schema is dirty at version %d: a migration failed halfway and needs a look", schemaVersion)
+	}
+	logger.Info("schema ready", "version", schemaVersion)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"status":  "ok",
-			"version": version.Version(),
-			"commit":  version.Commit(),
+		status := "ok"
+		if err := store.PingContext(r.Context()); err != nil {
+			status = "degraded"
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":         status,
+			"version":        version.Version(),
+			"commit":         version.Commit(),
+			"schema_version": schemaVersion,
 		})
 	})
 

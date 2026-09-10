@@ -43,8 +43,8 @@ test:
 	$(TEST_CMD) $(COVER_OPTS) $(TEST_LOCATION)
 
 # The race detector needs cgo, hence a C compiler. Kept out of the default
-# target so that `make test` works on a machine without one (NixOS profile
-# without gcc); the CI runs this one.
+# target so `make test` works outside the dev shell; inside `nix-shell` and in
+# the CI, gcc is available and this one runs.
 .PHONY: test-race
 test-race:
 	CGO_ENABLED=1 $(TEST_CMD) -race $(COVER_OPTS) $(TEST_LOCATION)
