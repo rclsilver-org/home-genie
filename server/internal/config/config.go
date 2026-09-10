@@ -35,6 +35,22 @@ type Config struct {
 
 	// LogLevel is one of debug, info, warn, error.
 	LogLevel string `yaml:"log_level"`
+
+	// OIDC wires the identity provider. Leaving it empty disables OIDC, which
+	// is a valid deployment: the local break-glass account still works.
+	OIDC OIDCConfig `yaml:"oidc"`
+}
+
+// OIDCConfig points at the identity provider.
+//
+// No client secret: the application is a public client using Authorization
+// Code + PKCE, and the server only ever verifies the identity token it is
+// handed. One less secret to deploy and rotate.
+type OIDCConfig struct {
+	// Issuer is the provider's issuer URL, e.g. https://sso.example.net/realms/home.
+	Issuer string `yaml:"issuer"`
+	// ClientID is what the identity token must be addressed to.
+	ClientID string `yaml:"client_id"`
 }
 
 // Default returns the configuration used when the file omits a field.

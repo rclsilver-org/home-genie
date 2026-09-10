@@ -38,6 +38,43 @@ the same time: verification runs against a decoy digest when the account is unkn
 Unknown fields in the body are refused with `400`, so that a client-side typo is an
 error rather than a setting silently ignored.
 
+### `POST /api/v1/auth/oidc` *(implemented)*
+
+Enrols a device from an **OIDC ID token**, which the application obtains for itself
+with **Authorization Code + PKCE** in a Custom Tab.
+
+```json
+{ "id_token": "eyJ…", "device_name": "phone", "platform": "android" }
+```
+
+→ `201`, with the same `{token, user, device}` as the local sign-in. The device token
+returned is identical in nature: **the identity provider leaves the path of every
+request** once enrolment is done, so it can go down without disconnecting anyone from
+their alerting tool.
+
+That split has a practical consequence: **no client secret**. A public client with
+PKCE does not need one, the application never sees a provider password, and the server
+only needs the issuer URL.
+
+Accounts are matched on the **`sub`**, never on the name or the address:
+
+- a rename at the provider finds the same account again and refreshes its name;
+- another `sub` carrying the same name **never** inherits the existing account;
+- an OIDC sign-in cannot absorb the **local break-glass account** of the same name —
+  it gets a derived name (`thomas-oidc`). That account exists precisely to work when
+  the provider does not; letting OIDC take it over would destroy the net through the
+  very mechanism it rescues.
+
+The audience is verified: a token addressed to another client of the same provider is
+refused, otherwise every application of the realm would become a way in here.
+
+An unreachable issuer breaks neither startup nor existing sessions — only new
+enrolments fail, and the failure is remembered for a few seconds so that each attempt
+does not turn into a long wait.
+
+With no `issuer` configured the endpoint answers `501`: a deployment without an
+identity provider fails clearly rather than mysteriously.
+
 ### `GET /api/v1/me` *(implemented)*
 
 Returns the caller and their devices, each with its connection state, its last

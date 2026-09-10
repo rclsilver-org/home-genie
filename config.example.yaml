@@ -12,3 +12,13 @@ database: "/var/lib/home-notifications/hnotifd.db"
 
 # debug, info, warn, error
 log_level: "info"
+
+# The OIDC provider. Leaving it empty disables OIDC: the local break-glass
+# account keeps working, which is a valid deployment.
+#
+# No client secret is needed: the application is a public client using
+# Authorization Code + PKCE, and the server only verifies the ID token it
+# hands over. One less secret to deploy and to rotate.
+oidc:
+  issuer: ""
+  client_id: "home-notifications"

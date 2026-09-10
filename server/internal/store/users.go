@@ -126,3 +126,60 @@ func boolToInt(value bool) int {
 func isUniqueViolation(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
+
+// CreateOIDCUser adds an account authenticating through the provider. It has no
+// password: it is not a break-glass account and must not become one.
+func (s *Store) CreateOIDCUser(subject, username, displayName string) (User, error) {
+	if subject == "" {
+		return User{}, fmt.Errorf("an OIDC account needs a subject")
+	}
+	if strings.TrimSpace(username) == "" {
+		return User{}, fmt.Errorf("the username must not be empty")
+	}
+
+	created := s.timestamp()
+	result, err := s.db.Exec(
+		`INSERT INTO users (username, display_name, oidc_subject, is_admin, created_at)
+		 VALUES (?, ?, ?, 0, ?)`, username, displayName, subject, created)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return User{}, fmt.Errorf("%w: subject or username already taken", ErrConflict)
+		}
+		return User{}, fmt.Errorf("creating the user: %w", err)
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return User{}, fmt.Errorf("reading the new id: %w", err)
+	}
+	at, _ := parseTime(created)
+
+	return User{
+		ID: id, Username: username, DisplayName: displayName,
+		OIDCSubject: subject, CreatedAt: at,
+	}, nil
+}
+
+// UserByOIDCSubject looks an account up by the stable identifier the provider
+// issues. The subject, never the username or the email: those can be
+// changed or reassigned, and matching on them would let a renamed account
+// inherit somebody else's channels.
+func (s *Store) UserByOIDCSubject(subject string) (User, error) {
+	return s.scanUser(s.db.QueryRow(
+		`SELECT id, username, display_name, password_hash, oidc_subject, is_admin, created_at
+		   FROM users WHERE oidc_subject = ?`, subject))
+}
+
+// UpdateUserProfile refreshes what the provider owns, so a rename there shows
+// up here at the next login.
+func (s *Store) UpdateUserProfile(id int64, username, displayName string) error {
+	if _, err := s.db.Exec(
+		`UPDATE users SET username = ?, display_name = ? WHERE id = ?`,
+		username, displayName, id); err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("%w: username %q", ErrConflict, username)
+		}
+		return fmt.Errorf("updating the profile: %w", err)
+	}
+	return nil
+}

@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/rclsilver-org/home-notifications/server/internal/hub"
+	"github.com/rclsilver-org/home-notifications/server/internal/oidc"
 	"github.com/rclsilver-org/home-notifications/server/internal/store"
 )
 
@@ -16,12 +17,13 @@ import (
 type Server struct {
 	store  *store.Store
 	hub    *hub.Hub
+	oidc   *oidc.Verifier
 	logger *slog.Logger
 }
 
 // New builds the HTTP surface.
-func New(s *store.Store, h *hub.Hub, logger *slog.Logger) *Server {
-	return &Server{store: s, hub: h, logger: logger}
+func New(s *store.Store, h *hub.Hub, verifier *oidc.Verifier, logger *slog.Logger) *Server {
+	return &Server{store: s, hub: h, oidc: verifier, logger: logger}
 }
 
 // Routes returns the mux serving the API.
@@ -29,6 +31,7 @@ func (s *Server) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
+	mux.HandleFunc("POST /api/v1/auth/oidc", s.handleOIDCLogin)
 
 	// Everything below authenticates a device, i.e. a human.
 	device := func(handler http.HandlerFunc) http.Handler {

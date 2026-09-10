@@ -23,6 +23,7 @@ import (
 	"github.com/rclsilver-org/home-notifications/server/internal/config"
 	"github.com/rclsilver-org/home-notifications/server/internal/db"
 	"github.com/rclsilver-org/home-notifications/server/internal/hub"
+	"github.com/rclsilver-org/home-notifications/server/internal/oidc"
 	"github.com/rclsilver-org/home-notifications/server/internal/reminder"
 	"github.com/rclsilver-org/home-notifications/server/internal/store"
 	"github.com/rclsilver-org/home-notifications/server/internal/version"
@@ -128,7 +129,14 @@ func runServer(args []string) error {
 			"`hnotifd admin create -username <name>`")
 	}
 
-	apiServer := api.New(repository, fanout, logger)
+	verifier := oidc.New(cfg.OIDC.Issuer, cfg.OIDC.ClientID)
+	if verifier.Enabled() {
+		logger.Info("OIDC enabled", "issuer", cfg.OIDC.Issuer, "client_id", cfg.OIDC.ClientID)
+	} else {
+		logger.Warn("OIDC disabled; only the local break-glass account can sign in")
+	}
+
+	apiServer := api.New(repository, fanout, verifier, logger)
 	mux := apiServer.Routes()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

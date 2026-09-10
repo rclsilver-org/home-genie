@@ -33,7 +33,7 @@ func newTestServerWithHub(t *testing.T) (*Server, *store.Store, *hub.Hub) {
 	repository := store.New(handle)
 	fanout := hub.New()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(repository, fanout, logger), repository, fanout
+	return New(repository, fanout, nil, logger), repository, fanout
 }
 
 // withLocalAccount creates the break-glass account with a known password.
