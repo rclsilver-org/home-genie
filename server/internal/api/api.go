@@ -27,7 +27,27 @@ func (s *Server) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
-	mux.Handle("GET /api/v1/me", s.requireDevice(http.HandlerFunc(s.handleMe)))
+
+	// Everything below authenticates a device, i.e. a human.
+	device := func(handler http.HandlerFunc) http.Handler {
+		return s.requireDevice(handler)
+	}
+
+	mux.Handle("GET /api/v1/me", device(s.handleMe))
+
+	mux.Handle("GET /api/v1/channels", device(s.handleListChannels))
+	mux.Handle("POST /api/v1/channels", device(s.handleCreateChannel))
+	mux.Handle("GET /api/v1/channels/{id}", device(s.handleGetChannel))
+	mux.Handle("PATCH /api/v1/channels/{id}", device(s.handleUpdateChannel))
+	mux.Handle("DELETE /api/v1/channels/{id}", device(s.handleDeleteChannel))
+
+	mux.Handle("GET /api/v1/channels/{id}/members", device(s.handleListMembers))
+	mux.Handle("PUT /api/v1/channels/{id}/members/{username}", device(s.handleSetMember))
+	mux.Handle("DELETE /api/v1/channels/{id}/members/{username}", device(s.handleRemoveMember))
+
+	mux.Handle("GET /api/v1/channels/{id}/tokens", device(s.handleListTokens))
+	mux.Handle("POST /api/v1/channels/{id}/tokens", device(s.handleCreateToken))
+	mux.Handle("DELETE /api/v1/channels/{id}/tokens/{tokenID}", device(s.handleRevokeToken))
 
 	return mux
 }

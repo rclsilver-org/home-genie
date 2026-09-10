@@ -1,0 +1,425 @@
+package api
+
+import (
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/rclsilver-org/home-notifications/server/internal/auth"
+	"github.com/rclsilver-org/home-notifications/server/internal/store"
+)
+
+type channelPayload struct {
+	ID          int64      `json:"id"`
+	Slug        string     `json:"slug"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	MutedUntil  *time.Time `json:"muted_until"`
+	Role        string     `json:"role,omitempty"`
+}
+
+type memberPayload struct {
+	UserID      int64  `json:"user_id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+	Role        string `json:"role"`
+}
+
+type publishTokenPayload struct {
+	ID         int64      `json:"id"`
+	Name       string     `json:"name"`
+	LastUsedAt *time.Time `json:"last_used_at"`
+	RevokedAt  *time.Time `json:"revoked_at"`
+	// Only ever set on creation: the clear value is shown once.
+	Token string `json:"token,omitempty"`
+}
+
+// handleListChannels returns the caller's channels with their role. It never
+// mentions a channel they are not a member of.
+func (s *Server) handleListChannels(w http.ResponseWriter, r *http.Request) {
+	user, _ := UserFrom(r.Context())
+
+	memberships, err := s.store.MembershipsOf(user.ID)
+	if err != nil {
+		s.logger.Error("listing the channels", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	payload := []channelPayload{}
+	for _, membership := range memberships {
+		payload = append(payload, toChannelPayload(membership.Channel, membership.Role))
+	}
+	s.writeJSON(w, http.StatusOK, payload)
+}
+
+type createChannelRequest struct {
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+func (s *Server) handleCreateChannel(w http.ResponseWriter, r *http.Request) {
+	user, _ := UserFrom(r.Context())
+
+	var request createChannelRequest
+	if err := decodeJSON(r, &request); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+
+	channel, err := s.store.CreateChannel(
+		strings.TrimSpace(request.Slug), request.Name, request.Description, user.ID)
+	switch {
+	case errors.Is(err, store.ErrInvalidSlug):
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	case errors.Is(err, store.ErrConflict):
+		s.writeError(w, http.StatusConflict, "this slug is already taken")
+		return
+	case err != nil:
+		s.logger.Error("creating the channel", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	s.logger.Info("channel created", "slug", channel.Slug, "owner", user.Username)
+	s.writeJSON(w, http.StatusCreated, toChannelPayload(channel, store.RoleOwner))
+}
+
+func (s *Server) handleGetChannel(w http.ResponseWriter, r *http.Request) {
+	channel, role, ok := s.channelForMember(w, r)
+	if !ok {
+		return
+	}
+	s.writeJSON(w, http.StatusOK, toChannelPayload(channel, role))
+}
+
+type updateChannelRequest struct {
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	// Present and null clears the mute; absent leaves it alone.
+	MutedUntil *string `json:"muted_until"`
+}
+
+func (s *Server) handleUpdateChannel(w http.ResponseWriter, r *http.Request) {
+	channel, _, ok := s.channelForAdmin(w, r)
+	if !ok {
+		return
+	}
+
+	var request updateChannelRequest
+	if err := decodeJSON(r, &request); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+
+	var muted **time.Time
+	if request.MutedUntil != nil {
+		if *request.MutedUntil == "" {
+			var cleared *time.Time
+			muted = &cleared
+		} else {
+			parsed, err := time.Parse(time.RFC3339, *request.MutedUntil)
+			if err != nil {
+				s.writeError(w, http.StatusBadRequest, "muted_until must be an RFC3339 instant")
+				return
+			}
+			pointer := &parsed
+			muted = &pointer
+		}
+	}
+
+	if err := s.store.UpdateChannel(channel.ID, request.Name, request.Description, muted); err != nil {
+		s.logger.Error("updating the channel", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	updated, err := s.store.ChannelByID(channel.ID)
+	if err != nil {
+		s.logger.Error("rereading the channel", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, toChannelPayload(updated, store.RoleOwner))
+}
+
+func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
+	channel, _, ok := s.channelForAdmin(w, r)
+	if !ok {
+		return
+	}
+
+	if err := s.store.DeleteChannel(channel.ID); err != nil {
+		s.logger.Error("deleting the channel", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	s.logger.Info("channel deleted", "slug", channel.Slug)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleListMembers(w http.ResponseWriter, r *http.Request) {
+	channel, _, ok := s.channelForMember(w, r)
+	if !ok {
+		return
+	}
+
+	members, err := s.store.MembersOf(channel.ID)
+	if err != nil {
+		s.logger.Error("listing the members", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	payload := []memberPayload{}
+	for _, member := range members {
+		payload = append(payload, memberPayload{
+			UserID:      member.UserID,
+			Username:    member.Username,
+			DisplayName: member.DisplayName,
+			Role:        string(member.Role),
+		})
+	}
+	s.writeJSON(w, http.StatusOK, payload)
+}
+
+type setMemberRequest struct {
+	Role string `json:"role"`
+}
+
+func (s *Server) handleSetMember(w http.ResponseWriter, r *http.Request) {
+	channel, _, ok := s.channelForAdmin(w, r)
+	if !ok {
+		return
+	}
+
+	var request setMemberRequest
+	if err := decodeJSON(r, &request); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	role := store.Role(request.Role)
+	if !role.Valid() {
+		s.writeError(w, http.StatusBadRequest, "role must be owner, writer or reader")
+		return
+	}
+
+	target, err := s.store.UserByUsername(r.PathValue("username"))
+	if errors.Is(err, store.ErrNotFound) {
+		s.writeError(w, http.StatusNotFound, "unknown user")
+		return
+	}
+	if err != nil {
+		s.logger.Error("looking the user up", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	if err := s.store.SetMember(channel.ID, target.ID, role); err != nil {
+		s.logger.Error("assigning the member", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, memberPayload{
+		UserID:      target.ID,
+		Username:    target.Username,
+		DisplayName: target.DisplayName,
+		Role:        string(role),
+	})
+}
+
+func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
+	channel, _, ok := s.channelForAdmin(w, r)
+	if !ok {
+		return
+	}
+
+	target, err := s.store.UserByUsername(r.PathValue("username"))
+	if errors.Is(err, store.ErrNotFound) {
+		s.writeError(w, http.StatusNotFound, "unknown user")
+		return
+	}
+	if err != nil {
+		s.logger.Error("looking the user up", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	err = s.store.RemoveMember(channel.ID, target.ID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		s.writeError(w, http.StatusNotFound, "this user is not a member")
+		return
+	case errors.Is(err, store.ErrConflict):
+		s.writeError(w, http.StatusConflict,
+			"removing the last owner would leave the channel unadministrable")
+		return
+	case err != nil:
+		s.logger.Error("removing the member", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
+	channel, _, ok := s.channelForAdmin(w, r)
+	if !ok {
+		return
+	}
+
+	tokens, err := s.store.PublishTokensOf(channel.ID)
+	if err != nil {
+		s.logger.Error("listing the tokens", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	payload := []publishTokenPayload{}
+	for _, token := range tokens {
+		payload = append(payload, publishTokenPayload{
+			ID:         token.ID,
+			Name:       token.Name,
+			LastUsedAt: token.LastUsedAt,
+			RevokedAt:  token.RevokedAt,
+		})
+	}
+	s.writeJSON(w, http.StatusOK, payload)
+}
+
+type createTokenRequest struct {
+	Name string `json:"name"`
+}
+
+func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
+	channel, _, ok := s.channelForAdmin(w, r)
+	if !ok {
+		return
+	}
+
+	var request createTokenRequest
+	if err := decodeJSON(r, &request); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if strings.TrimSpace(request.Name) == "" {
+		s.writeError(w, http.StatusBadRequest, "name is required, to know which producer holds it")
+		return
+	}
+
+	plain, hashed, err := auth.NewToken(auth.PublishTokenPrefix)
+	if err != nil {
+		s.logger.Error("drawing the token", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	token, err := s.store.CreatePublishToken(channel.ID, request.Name, hashed)
+	if err != nil {
+		s.logger.Error("creating the token", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	s.logger.Info("publish token created", "channel", channel.Slug, "name", token.Name)
+	s.writeJSON(w, http.StatusCreated, publishTokenPayload{
+		ID:    token.ID,
+		Name:  token.Name,
+		Token: plain,
+	})
+}
+
+func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
+	channel, _, ok := s.channelForAdmin(w, r)
+	if !ok {
+		return
+	}
+
+	tokenID, err := strconv.ParseInt(r.PathValue("tokenID"), 10, 64)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "unknown token")
+		return
+	}
+
+	err = s.store.RevokePublishToken(channel.ID, tokenID)
+	if errors.Is(err, store.ErrNotFound) {
+		s.writeError(w, http.StatusNotFound, "unknown token")
+		return
+	}
+	if err != nil {
+		s.logger.Error("revoking the token", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	s.logger.Info("publish token revoked", "channel", channel.Slug, "token_id", tokenID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// channelForMember resolves the channel in the path and checks the caller
+// belongs to it.
+//
+// A non-member gets 404, not 403: answering "forbidden" would confirm the
+// channel exists to someone who has no business knowing.
+func (s *Server) channelForMember(w http.ResponseWriter, r *http.Request) (store.Channel, store.Role, bool) {
+	user, _ := UserFrom(r.Context())
+
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "unknown channel")
+		return store.Channel{}, "", false
+	}
+
+	role, err := s.store.RoleOn(id, user.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		s.writeError(w, http.StatusNotFound, "unknown channel")
+		return store.Channel{}, "", false
+	}
+	if err != nil {
+		s.logger.Error("reading the role", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return store.Channel{}, "", false
+	}
+
+	channel, err := s.store.ChannelByID(id)
+	if err != nil {
+		s.logger.Error("reading the channel", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return store.Channel{}, "", false
+	}
+
+	return channel, role, true
+}
+
+// channelForAdmin additionally requires the owner role. Here 403 is right:
+// the caller is a member, so the channel's existence is not a secret from
+// them.
+func (s *Server) channelForAdmin(w http.ResponseWriter, r *http.Request) (store.Channel, store.Role, bool) {
+	channel, role, ok := s.channelForMember(w, r)
+	if !ok {
+		return store.Channel{}, "", false
+	}
+	if !role.CanAdminister() {
+		s.writeError(w, http.StatusForbidden, "only an owner can do this")
+		return store.Channel{}, "", false
+	}
+	return channel, role, true
+}
+
+func toChannelPayload(channel store.Channel, role store.Role) channelPayload {
+	return channelPayload{
+		ID:          channel.ID,
+		Slug:        channel.Slug,
+		Name:        channel.Name,
+		Description: channel.Description,
+		MutedUntil:  channel.MutedUntil,
+		Role:        string(role),
+	}
+}
