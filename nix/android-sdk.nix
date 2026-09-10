@@ -56,9 +56,13 @@ pkgs.mkShell {
   # honour the jvmargs from gradle.properties, and that daemon does not
   # inherit properties passed through GRADLE_OPTS.
 
+  # Banner on stderr, for the same reason as in shell.nix: on stdout it
+  # pollutes the output of any `nix-shell --run` read through a pipe.
   shellHook = ''
-    echo "SDK Android    : $ANDROID_HOME"
-    echo "build-tools    : ${buildToolsVersion}"
-    echo "WiFi debugging : adb pair <ip>:<port> then adb connect <ip>:5555"
+    {
+      echo "Android SDK  : $ANDROID_HOME"
+      echo "build-tools  : ${buildToolsVersion}"
+      echo "Wi-Fi debug  : adb pair <ip>:<port> then adb connect <ip>:5555"
+    } >&2
   '';
 }

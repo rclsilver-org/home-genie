@@ -56,6 +56,11 @@ private const val DEFAULT_SERVER_URL = "http://192.0.2.10:8088"
 fun AppScreen(settings: Settings) {
     val context = LocalContext.current
     val token by settings.token.collectAsState(initial = "")
+    val serverUrl by settings.serverUrl.collectAsState(initial = "")
+
+    // Navigation by plain state: two screens do not justify a library, and
+    // the open channel must survive a recomposition but not the process.
+    var openChannel by remember { mutableStateOf<ChannelPayload?>(null) }
 
     // As soon as a session exists, the service must be running. Without this
     // an application update — which kills the service without START_STICKY
@@ -74,10 +79,16 @@ fun AppScreen(settings: Settings) {
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            if (token.isEmpty()) {
-                LoginCard(settings)
-            } else {
-                DiagnosticCard(settings)
+            val current = openChannel
+            when {
+                token.isEmpty() -> LoginCard(settings)
+                current != null -> ChannelScreen(
+                    channel = current,
+                    serverUrl = serverUrl,
+                    token = token,
+                    onBack = { openChannel = null },
+                )
+                else -> DiagnosticCard(settings) { openChannel = it }
             }
         }
     }
@@ -176,7 +187,7 @@ private fun LoginCard(settings: Settings) {
 }
 
 @Composable
-private fun DiagnosticCard(settings: Settings) {
+private fun DiagnosticCard(settings: Settings, onOpenChannel: (ChannelPayload) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val state by ConnectionService.observedState.collectAsState()
@@ -209,7 +220,7 @@ private fun DiagnosticCard(settings: Settings) {
     }
 
     Spacer(Modifier.height(8.dp))
-    ChannelsSection(settings)
+    ChannelsSection(settings, onOpenChannel)
 
     Spacer(Modifier.height(8.dp))
     Text("Reliability", style = MaterialTheme.typography.titleMedium)
@@ -264,7 +275,7 @@ private fun timestamp(millis: Long): String =
  * member stays unread for the others.
  */
 @Composable
-private fun ChannelsSection(settings: Settings) {
+private fun ChannelsSection(settings: Settings, onOpenChannel: (ChannelPayload) -> Unit) {
     val scope = rememberCoroutineScope()
     val serverUrl by settings.serverUrl.collectAsState(initial = "")
     val token by settings.token.collectAsState(initial = "")
@@ -290,7 +301,10 @@ private fun ChannelsSection(settings: Settings) {
     }
 
     channels.forEach { channel ->
-        Card(modifier = Modifier.fillMaxWidth()) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            onClick = { onOpenChannel(channel) },
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,

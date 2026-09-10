@@ -43,7 +43,7 @@ class Notifier(private val context: Context) {
         val title = message.title.ifEmpty { message.channelSlug }
         val text = message.body.ifEmpty { message.title }
 
-        val notification = Notification.Builder(context, channelId)
+        val builder = Notification.Builder(context, channelId)
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(text))
@@ -52,7 +52,26 @@ class Notifier(private val context: Context) {
             .setDeleteIntent(dismissed)
             .setAutoCancel(true)
             .setWhen(System.currentTimeMillis())
-            .build()
+
+        // "Acknowledge" only appears on a message reporting an alert. It is
+        // the central gesture: stopping the reminders without unlocking the
+        // phone. Distinct from swiping, which only marks it read and lets the
+        // alert come back at the next reminder.
+        message.alertId?.let { alertId ->
+            val ack = PendingIntent.getBroadcast(
+                context, alertId.toInt(),
+                Intent(context, AckReceiver::class.java)
+                    .putExtra(AckReceiver.EXTRA_ALERT_ID, alertId)
+                    .putExtra(AckReceiver.EXTRA_TAG, message.channelSlug)
+                    .putExtra(AckReceiver.EXTRA_NOTIFICATION_ID, message.id.toInt()),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            builder.addAction(
+                Notification.Action.Builder(null, "Acknowledge", ack).build()
+            )
+        }
+
+        val notification = builder.build()
 
         // The tag is the message identifier: an update of the same message
         // replaces the notification instead of stacking one more.

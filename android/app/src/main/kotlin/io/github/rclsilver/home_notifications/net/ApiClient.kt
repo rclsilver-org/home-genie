@@ -116,3 +116,76 @@ suspend fun markChannelRead(serverUrl: String, token: String, channelId: Long): 
 
 /** A JSON body, to avoid repeating the media type. */
 internal fun String.toRequestBodyJson() = this.toRequestBody(JSON)
+
+/** Acknowledges an alert. Local to the server: nothing goes to Alertmanager. */
+suspend fun ackAlert(serverUrl: String, token: String, alertId: Long): Result<Unit> =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val call = ApiClient.defaultClient().newCall(
+                Request.Builder()
+                    .url("${serverUrl.trimEnd('/')}/api/v1/alerts/$alertId/ack")
+                    .post(ByteArray(0).toRequestBody(null))
+                    .header("Authorization", "Bearer $token")
+                    .build()
+            )
+            call.execute().use { response ->
+                if (!response.isSuccessful) throw IOException("HTTP error ${response.code}")
+            }
+        }
+    }
+
+/** A channel's feed, newest first. */
+suspend fun fetchMessages(serverUrl: String, token: String, channelId: Long, limit: Int = 50):
+    Result<List<MessagePayload>> = withContext(Dispatchers.IO) {
+    runCatching {
+        get(serverUrl, token, "/api/v1/channels/$channelId/messages?limit=$limit") { text ->
+            Json { ignoreUnknownKeys = true }
+                .decodeFromString(ListSerializer(MessagePayload.serializer()), text)
+        }
+    }
+}
+
+/** A channel's alerts; openOnly restricts to those still open. */
+suspend fun fetchAlerts(serverUrl: String, token: String, channelId: Long, openOnly: Boolean):
+    Result<List<AlertPayload>> = withContext(Dispatchers.IO) {
+    runCatching {
+        val suffix = if (openOnly) "?open=1" else ""
+        get(serverUrl, token, "/api/v1/channels/$channelId/alerts$suffix") { text ->
+            Json { ignoreUnknownKeys = true }
+                .decodeFromString(ListSerializer(AlertPayload.serializer()), text)
+        }
+    }
+}
+
+/** Marks a channel read up to the given message, or entirely. */
+suspend fun markChannelReadUpTo(serverUrl: String, token: String, channelId: Long, uptoId: Long):
+    Result<Unit> = withContext(Dispatchers.IO) {
+    runCatching {
+        val suffix = if (uptoId > 0) "?upto_id=$uptoId" else ""
+        val call = ApiClient.defaultClient().newCall(
+            Request.Builder()
+                .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId/read$suffix")
+                .post(ByteArray(0).toRequestBody(null))
+                .header("Authorization", "Bearer $token")
+                .build()
+        )
+        call.execute().use { response ->
+            if (!response.isSuccessful) throw IOException("HTTP error ${response.code}")
+        }
+    }
+}
+
+/** An authenticated GET, so the plumbing is not repeated on every call. */
+private fun <T> get(serverUrl: String, token: String, path: String, decode: (String) -> T): T {
+    val call = ApiClient.defaultClient().newCall(
+        Request.Builder()
+            .url("${serverUrl.trimEnd('/')}$path")
+            .header("Authorization", "Bearer $token")
+            .build()
+    )
+    return call.execute().use { response ->
+        val text = response.body?.string().orEmpty()
+        if (!response.isSuccessful) throw IOException("HTTP error ${response.code}")
+        decode(text)
+    }
+}

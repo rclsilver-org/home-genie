@@ -57,6 +57,14 @@
         </service>
 
         <receiver
+            android:name=".service.AckReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".service.DismissReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".service.BootReceiver"
             android:exported="true">
             <intent-filter>

@@ -9,6 +9,9 @@ data class MessagePayload(
     val id: Long,
     @SerialName("channel_id") val channelId: Long,
     @SerialName("channel_slug") val channelSlug: String = "",
+    // Present when the message reports an alert: it is what decides whether
+    // there is an "Acknowledge" button in the notification.
+    @SerialName("alert_id") val alertId: Long? = null,
     val title: String = "",
     val body: String = "",
     val priority: Int = 3,
@@ -33,3 +36,21 @@ data class ChannelPayload(
     val role: String = "",
     val unread: Int = 0,
 )
+
+/** An Alertmanager alert, as the server exposes it. */
+@Serializable
+data class AlertPayload(
+    val id: Long,
+    @SerialName("channel_id") val channelId: Long,
+    val status: String = "",
+    val severity: String = "",
+    val title: String = "",
+    val body: String = "",
+    val labels: Map<String, String> = emptyMap(),
+    @SerialName("started_at") val startedAt: String = "",
+    @SerialName("acked_by") val ackedBy: String = "",
+    @SerialName("acked_at") val ackedAt: String? = null,
+) {
+    val isAcked: Boolean get() = ackedAt != null
+    val isOpen: Boolean get() = status == "firing"
+}

@@ -26,7 +26,10 @@ pkgs.mkShell {
   # No toolchain download: the shell's version has to be enough.
   GOTOOLCHAIN = "local";
 
+  # The banner goes to stderr: on stdout it pollutes the output of any
+  # `nix-shell --run` whose result is read through a pipe — which has already
+  # turned a test into a false positive.
   shellHook = ''
-    echo "Go : $(go version)"
+    echo "Go: $(go version)" >&2
   '';
 }
