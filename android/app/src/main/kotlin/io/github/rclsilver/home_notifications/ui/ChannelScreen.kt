@@ -114,6 +114,9 @@ fun ChannelScreen(
         Text("no message", style = MaterialTheme.typography.bodySmall)
     }
 
+    RemindersSection(channel.id, serverUrl, token)
+
+    Text("Messages", style = MaterialTheme.typography.titleMedium)
     messages.forEach { message ->
         MessageCard(message) {
             scope.launch {

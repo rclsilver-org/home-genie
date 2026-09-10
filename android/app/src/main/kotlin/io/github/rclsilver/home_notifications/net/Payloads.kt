@@ -54,3 +54,23 @@ data class AlertPayload(
     val isAcked: Boolean get() = ackedAt != null
     val isOpen: Boolean get() = status == "firing"
 }
+
+/**
+ * A reminder cadence.
+ *
+ * [scope] is "default" for a per-severity default, "channel" for an override
+ * belonging to the channel. The most specific wins, so showing the
+ * scope avoids the belief that one is editing a value that does not apply.
+ */
+@Serializable
+data class ReminderPolicyPayload(
+    val severity: String,
+    @SerialName("interval_seconds") val intervalSeconds: Int = 0,
+    @SerialName("quiet_from") val quietFrom: String = "",
+    @SerialName("quiet_to") val quietTo: String = "",
+    val enabled: Boolean = false,
+    val scope: String = "",
+) {
+    val isOverride: Boolean get() = scope == "channel"
+    val intervalMinutes: Int get() = intervalSeconds / 60
+}

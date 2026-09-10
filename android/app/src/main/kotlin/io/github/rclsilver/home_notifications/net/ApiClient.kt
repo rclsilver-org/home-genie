@@ -189,3 +189,61 @@ private fun <T> get(serverUrl: String, token: String, path: String, decode: (Str
         decode(text)
     }
 }
+
+/** The cadences applying to a channel: its overrides and inherited defaults. */
+suspend fun fetchReminderPolicies(serverUrl: String, token: String, channelId: Long):
+    Result<List<ReminderPolicyPayload>> = withContext(Dispatchers.IO) {
+    runCatching {
+        get(serverUrl, token, "/api/v1/channels/$channelId/reminders") { text ->
+            Json { ignoreUnknownKeys = true }
+                .decodeFromString(ListSerializer(ReminderPolicyPayload.serializer()), text)
+        }
+    }
+}
+
+/** Sets the channel's override for a severity. Owner only. */
+suspend fun setReminderPolicy(
+    serverUrl: String,
+    token: String,
+    channelId: Long,
+    policy: ReminderPolicyPayload,
+): Result<Unit> = withContext(Dispatchers.IO) {
+    runCatching {
+        val payload = Json.encodeToString(ReminderPolicyPayload.serializer(), policy)
+        val call = ApiClient.defaultClient().newCall(
+            Request.Builder()
+                .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId/reminders")
+                .put(payload.toRequestBodyJson())
+                .header("Authorization", "Bearer $token")
+                .build()
+        )
+        call.execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                val message = runCatching {
+                    Json { ignoreUnknownKeys = true }
+                        .decodeFromString(ErrorResponse.serializer(), text).error
+                }.getOrElse { "HTTP error ${response.code}" }
+                throw IOException(message)
+            }
+        }
+    }
+}
+
+/** Mutes a channel until an instant, or lifts the mute. */
+suspend fun muteChannel(serverUrl: String, token: String, channelId: Long, untilRfc3339: String):
+    Result<Unit> = withContext(Dispatchers.IO) {
+    runCatching {
+        val body = """{"muted_until":"$untilRfc3339"}"""
+        val call = ApiClient.defaultClient().newCall(
+            Request.Builder()
+                .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId")
+                .patch(body.toRequestBodyJson())
+                .header("Authorization", "Bearer $token")
+                .build()
+        )
+        call.execute().use { response ->
+            if (!response.isSuccessful) throw IOException("HTTP error ${response.code}")
+        }
+    }
+}
