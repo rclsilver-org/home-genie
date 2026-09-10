@@ -124,3 +124,31 @@ func (s *Server) resolveOIDCUser(identity oidc.Identity) (store.User, error) {
 	}
 	return created, err
 }
+
+type authConfigPayload struct {
+	OIDC oidcConfigPayload `json:"oidc"`
+}
+
+type oidcConfigPayload struct {
+	Enabled  bool   `json:"enabled"`
+	Issuer   string `json:"issuer,omitempty"`
+	ClientID string `json:"client_id,omitempty"`
+}
+
+// handleAuthConfig tells the application how to authenticate.
+//
+// Unauthenticated on purpose, and harmless: an issuer URL and a public
+// client id are exactly the values a native app would otherwise hardcode.
+// Serving them means changing realms or renaming the client does not
+// require shipping a new APK.
+func (s *Server) handleAuthConfig(w http.ResponseWriter, r *http.Request) {
+	payload := authConfigPayload{}
+	if s.oidc != nil && s.oidc.Enabled() {
+		payload.OIDC = oidcConfigPayload{
+			Enabled:  true,
+			Issuer:   s.oidc.Issuer(),
+			ClientID: s.oidc.ClientID(),
+		}
+	}
+	s.writeJSON(w, http.StatusOK, payload)
+}

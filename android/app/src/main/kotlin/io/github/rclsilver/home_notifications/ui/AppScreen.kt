@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import io.github.rclsilver.home_notifications.MainActivity
 import io.github.rclsilver.home_notifications.data.Settings
 import io.github.rclsilver.home_notifications.net.ApiClient
 import io.github.rclsilver.home_notifications.net.ChannelPayload
@@ -121,9 +122,11 @@ private fun LoginCard(settings: Settings) {
         modifier = Modifier.fillMaxWidth(),
     )
 
+    val oidcError by MainActivity.observedLoginError.collectAsState()
     if (error.isNotEmpty()) {
         Text(error, color = MaterialTheme.colorScheme.error)
     }
+    oidcError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
     Button(
         onClick = {
@@ -150,7 +153,25 @@ private fun LoginCard(settings: Settings) {
         enabled = !busy && username.isNotBlank() && password.isNotBlank(),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Text(if (busy) "Signing in…" else "Sign in")
+        Text(if (busy) "Signing in…" else "Sign in with the break-glass account")
+    }
+
+    // The identity provider day to day; the local account stays the net for
+    // when whatever hosts it is unavailable.
+    OutlinedButton(
+        onClick = {
+            error = ""
+            MainActivity.clearLoginError()
+            scope.launch {
+                startOidcLogin(context, serverUrl).onFailure {
+                    error = it.message ?: "could not start authentication"
+                }
+            }
+        },
+        enabled = !busy,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text("Sign in with the identity provider")
     }
 }
 

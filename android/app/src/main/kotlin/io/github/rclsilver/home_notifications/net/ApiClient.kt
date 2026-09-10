@@ -113,3 +113,6 @@ suspend fun markChannelRead(serverUrl: String, token: String, channelId: Long): 
             }
         }
     }
+
+/** A JSON body, to avoid repeating the media type. */
+internal fun String.toRequestBodyJson() = this.toRequestBody(JSON)

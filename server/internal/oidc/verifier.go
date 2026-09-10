@@ -127,3 +127,9 @@ func (v *Verifier) discover(ctx context.Context) (*coreoidc.Provider, error) {
 	v.provider, v.lastErr = provider, nil
 	return provider, nil
 }
+
+// Issuer is the realm URL the application must authenticate against.
+func (v *Verifier) Issuer() string { return v.issuer }
+
+// ClientID is the public client the application must present.
+func (v *Verifier) ClientID() string { return v.clientID }

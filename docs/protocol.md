@@ -38,6 +38,13 @@ the same time: verification runs against a decoy digest when the account is unkn
 Unknown fields in the body are refused with `400`, so that a client-side typo is an
 error rather than a setting silently ignored.
 
+### `GET /api/v1/auth/config` *(implemented)*
+
+What the sign-in screen needs before showing anything: whether OIDC is enabled, and if
+so the issuer and the public client id. Unauthenticated, because it is read before
+there is any session, and it carries nothing that is not already public in an
+authorization URL.
+
 ### `POST /api/v1/auth/oidc` *(implemented)*
 
 Enrols a device from an **OIDC ID token**, which the application obtains for itself

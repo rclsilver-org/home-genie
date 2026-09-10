@@ -32,6 +32,7 @@ func (s *Server) Routes() *http.ServeMux {
 
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	mux.HandleFunc("POST /api/v1/auth/oidc", s.handleOIDCLogin)
+	mux.HandleFunc("GET /api/v1/auth/config", s.handleAuthConfig)
 
 	// Everything below authenticates a device, i.e. a human.
 	device := func(handler http.HandlerFunc) http.Handler {

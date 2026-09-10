@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
@@ -195,5 +196,46 @@ func TestTheDeviceTokenWorksLikeAnyOther(t *testing.T) {
 	}
 	if len(me.Devices) != 1 || !me.Devices[0].Current {
 		t.Fatalf("devices = %+v", me.Devices)
+	}
+}
+
+// The application must be able to learn from the server how to authenticate,
+// so that changing realm or client name imposes no new release of the APK.
+func TestAuthConfigAnnouncesOIDC(t *testing.T) {
+	server, _, issuer := newOIDCServer(t)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/config", nil)
+	recorder := httptest.NewRecorder()
+	server.Routes().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+
+	var payload authConfigPayload
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.OIDC.Enabled {
+		t.Fatal("OIDC is enabled but advertised as disabled")
+	}
+	if payload.OIDC.Issuer != issuer.URL || payload.OIDC.ClientID != oidcClientID {
+		t.Fatalf("configuration = %+v", payload.OIDC)
+	}
+}
+
+func TestAuthConfigSaysWhenOIDCIsOff(t *testing.T) {
+	server, _ := newTestServer(t)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/config", nil)
+	recorder := httptest.NewRecorder()
+	server.Routes().ServeHTTP(recorder, request)
+
+	var payload authConfigPayload
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.OIDC.Enabled || payload.OIDC.Issuer != "" {
+		t.Fatalf("configuration = %+v — a server without OIDC must advertise nothing", payload.OIDC)
 	}
 }

@@ -79,6 +79,23 @@ have to stay in step.
 The SDK is built with no garbage-collector root: a `nix-collect-garbage` will take it
 back and it will have to be downloaded again.
 
+### Identifiants
+
+```
+applicationId   io.github.rclsilver.home_notifications
+OAuth scheme    io.github.rclsilver.home-notifications://oauth2redirect
+```
+
+The scheme carries a **dash** where the `applicationId` carries an underscore, and that
+is not a typo: an underscore is legal in a Java package, but RFC 3986 forbids it in a
+URI scheme and a browser may refuse to redirect to it. The three places that carry this
+scheme — the manifest, `OidcClient.kt` and the provider client's `valid_redirect_uris`
+— have to stay in step, or the provider refuses the redirect.
+
+Changing the `applicationId` makes the application a **different application** as far as
+Android is concerned: the old one stays installed with its own session, and has to be
+uninstalled so that two services do not each hold a socket.
+
 ### On the phone
 
 The test is run **on a real phone, not on an emulator**: an AOSP emulator reproduces

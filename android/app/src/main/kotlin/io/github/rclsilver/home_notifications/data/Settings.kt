@@ -61,3 +61,62 @@ class Settings(private val context: Context) {
         }
     }
 }
+
+/**
+ * Transient state of the OIDC flow.
+ *
+ * Persisted rather than kept in memory: the Custom Tab sends the
+ * application to the background, and Android may kill the process while
+ * the user authenticates. A lost verifier would make the code unusable.
+ */
+class PendingLogin(private val context: Context) {
+
+    private object Keys {
+        val verifier = stringPreferencesKey("pkce_verifier")
+        val state = stringPreferencesKey("oidc_state")
+        val issuer = stringPreferencesKey("oidc_issuer")
+        val clientId = stringPreferencesKey("oidc_client_id")
+        val serverUrl = stringPreferencesKey("oidc_server_url")
+    }
+
+    data class Pending(
+        val verifier: String,
+        val state: String,
+        val issuer: String,
+        val clientId: String,
+        val serverUrl: String,
+    ) {
+        val isPresent: Boolean get() = verifier.isNotEmpty() && state.isNotEmpty()
+    }
+
+    suspend fun save(verifier: String, state: String, issuer: String, clientId: String, serverUrl: String) {
+        context.dataStore.edit {
+            it[Keys.verifier] = verifier
+            it[Keys.state] = state
+            it[Keys.issuer] = issuer
+            it[Keys.clientId] = clientId
+            it[Keys.serverUrl] = serverUrl
+        }
+    }
+
+    suspend fun read(): Pending {
+        val prefs = context.dataStore.data.first()
+        return Pending(
+            verifier = prefs[Keys.verifier] ?: "",
+            state = prefs[Keys.state] ?: "",
+            issuer = prefs[Keys.issuer] ?: "",
+            clientId = prefs[Keys.clientId] ?: "",
+            serverUrl = prefs[Keys.serverUrl] ?: "",
+        )
+    }
+
+    /** Erased as soon as the exchange happens: a verifier serves once. */
+    suspend fun clear() {
+        context.dataStore.edit {
+            Keys.let { k ->
+                it.remove(k.verifier); it.remove(k.state)
+                it.remove(k.issuer); it.remove(k.clientId); it.remove(k.serverUrl)
+            }
+        }
+    }
+}
