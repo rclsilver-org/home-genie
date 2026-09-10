@@ -56,7 +56,7 @@ func (s *Server) handleIngestNtfy(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("message published", "channel", channel.Slug,
 		"message_id", message.ID, "priority", message.Priority)
 
-	s.publishToChannel(channel.ID, eventMessageNew, toMessagePayload(message, channel.Slug))
+	s.publishMessage(channel, message)
 
 	// The response mimics ntfy's, so a producer that parses it is not
 	// surprised. Most only look at the status code.
@@ -199,6 +199,8 @@ type messagePayload struct {
 	ClickURL    string          `json:"click_url,omitempty"`
 	Actions     json.RawMessage `json:"actions,omitempty"`
 	CreatedAt   time.Time       `json:"created_at"`
+	// Specific to the caller, like the unread count.
+	Read bool `json:"read"`
 }
 
 func toMessagePayload(message store.Message, slug string) messagePayload {
@@ -212,4 +214,24 @@ func toMessagePayload(message store.Message, slug string) messagePayload {
 		Priority: message.Priority, Tags: tags, ClickURL: message.ClickURL,
 		Actions: message.Actions, CreatedAt: message.CreatedAt,
 	}
+}
+
+// publishMessage records the message as queued for every member, then fans
+// it out. Queued is written before the fanout on purpose: a recipient with
+// no live socket must still appear in the timeline, since "queued but never
+// sent" is exactly the miss the reliability figure is looking for.
+func (s *Server) publishMessage(channel store.Channel, message store.Message) {
+	members, err := s.store.MemberUserIDs(channel.ID)
+	if err != nil {
+		s.logger.Error("listing the members", "error", err, "channel_id", channel.ID)
+		return
+	}
+
+	for _, userID := range members {
+		if err := s.store.RecordMessageEvent(message.ID, userID, nil, store.MessageQueued); err != nil {
+			s.logger.Warn("recording the queueing", "error", err, "user_id", userID)
+		}
+	}
+
+	s.publishToUsers(members, eventMessageNew, toMessagePayload(message, channel.Slug))
 }

@@ -138,13 +138,52 @@ Alertmanager v4 webhook. One alert entity per `fingerprint`, see the design.
 
 - `GET /api/v1/channels/{id}/messages?limit=&before_id=` *(implemented)* — a channel's
   feed, newest first, paginated backwards with `before_id`
-- `POST /api/v1/messages/{id}/read`, `POST /api/v1/channels/{id}/read?up_to_seq=N`
-- `GET /api/v1/messages/{id}/timeline`
 - `GET /api/v1/alerts`, `POST /api/v1/alerts/{id}/ack`
 - `POST /api/v1/devices`
 
 The endpoints marked *(implemented)* above are available; the others land as step 1
 progresses.
+
+## Reading and timeline *(implemented)*
+
+An information channel reads like **a shared RSS feed**: the message is single and
+common, but the "seen" state belongs to each user. A member who reads changes nothing
+for the others.
+
+- `GET /api/v1/channels` carries an `unread` **specific to the caller**
+- `GET /api/v1/channels/{id}/messages` carries a `read` per message, computed in a
+  single query for the whole batch
+- `POST /api/v1/messages/{id}/read` — idempotent: two calls produce a single timeline
+  entry
+- `POST /api/v1/channels/{id}/read?upto_id=N` — marks up to and including N, or the
+  whole channel if `upto_id` is absent; returns `{"marked": n}`
+- `GET /api/v1/messages/{id}/timeline` — the delivery timeline
+
+Marking as read emits a `messages.read` event **to the other devices of the same user
+only**, so that reading on the phone clears the badge on the tablet without touching
+the other members.
+
+### The timeline
+
+An **append-only** log: the story of a message grows, it is never rewritten.
+
+| `kind` | When |
+|---|---|
+| `queued` | The message is recorded for this recipient |
+| `sent` | It was written into this device's socket |
+| `delivered` | This device acknowledged it |
+| `read` | The user opened it |
+
+`queued` is written **before** the broadcast, deliberately: a recipient with no live
+socket must still show up, since "queued but never sent" is exactly the failure the
+reliability measurement is looking for. And "sent without an acknowledgement" is the
+other one — that of a socket the system froze without closing.
+
+### Acknowledgement, on the socket
+
+The client sends `{"kind":"ack","seq":N}`. Everything up to `N` becomes `delivered` on
+that device. The cursor never rewinds: an older acknowledgement re-delivers nothing.
+It is stored in `devices.acked_seq` (migration 0002).
 
 ## WebSocket *(implemented)*
 
@@ -166,6 +205,7 @@ Frames:
 | `heartbeat` | — | **Application-level** proof of life, every 30 s |
 | `channel.created`, `channel.updated`, `channel.deleted` | yes | Channel changes |
 | `message.new` | yes | A message published on a channel one is a member of |
+| `messages.read` | yes | One of my other devices marked messages as read |
 | `member.changed`, `member.removed` | yes | Membership changes |
 
 The heartbeat is an application frame and not a protocol ping, because the application

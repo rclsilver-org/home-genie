@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/rclsilver-org/home-notifications/server/internal/store"
 )
 
 const (
@@ -104,7 +106,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	lastSeq, err := s.replay(ctx, conn, user.ID, sinceSeq)
+	lastSeq, err := s.replay(ctx, conn, user.ID, device.ID, sinceSeq)
 	if err != nil {
 		s.logger.Warn("replay failed", "error", err, "device_id", device.ID)
 		return
@@ -114,15 +116,16 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reading is what surfaces a client-side close and drives the pings the
-	// library answers on our behalf. The clients send nothing, so anything
-	// read is discarded.
+	// Reading surfaces a client-side close, drives the pings the library
+	// answers on our behalf, and carries the client's acknowledgements.
 	go func() {
 		for {
-			if _, _, err := conn.Read(ctx); err != nil {
+			_, data, err := conn.Read(ctx)
+			if err != nil {
 				subscription.Close()
 				return
 			}
+			s.handleClientFrame(user.ID, device.ID, data)
 		}
 	}()
 
@@ -151,6 +154,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			}); err != nil {
 				return
 			}
+			s.recordSent(event, user.ID, device.ID)
 			lastSeq = event.Seq
 
 		case <-ticker.C:
@@ -168,7 +172,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 // replay sends everything the client missed, page by page, and returns the
 // last Seq it now holds.
-func (s *Server) replay(ctx context.Context, conn *websocket.Conn, userID, sinceSeq int64) (int64, error) {
+func (s *Server) replay(ctx context.Context, conn *websocket.Conn, userID, deviceID, sinceSeq int64) (int64, error) {
 	cursor := sinceSeq
 	for {
 		events, err := s.store.EventsSince(userID, cursor, replayPageSize)
@@ -181,6 +185,7 @@ func (s *Server) replay(ctx context.Context, conn *websocket.Conn, userID, since
 			}); err != nil {
 				return cursor, err
 			}
+			s.recordSent(event, userID, deviceID)
 			cursor = event.Seq
 		}
 		if len(events) < replayPageSize {
@@ -223,4 +228,65 @@ func (s *Server) publishToUsers(userIDs []int64, kind string, payload any) {
 		// Fan out what was recorded: a partial delivery beats none.
 	}
 	s.hub.PublishAll(events)
+}
+
+// clientFrame is the only thing clients send.
+type clientFrame struct {
+	Kind string `json:"kind"`
+	Seq  int64  `json:"seq"`
+}
+
+const frameAck = "ack"
+
+// handleClientFrame interprets an acknowledgement. It is what turns a
+// "sent" into a "delivered" and therefore what makes a miss detectable: a
+// message written to a socket that the device never confirms is exactly the
+// silent failure this whole design is built around.
+func (s *Server) handleClientFrame(userID, deviceID int64, data []byte) {
+	var incoming clientFrame
+	if err := json.Unmarshal(data, &incoming); err != nil {
+		s.logger.Warn("unreadable client frame", "device_id", deviceID)
+		return
+	}
+	if incoming.Kind != frameAck || incoming.Seq <= 0 {
+		return
+	}
+
+	count, err := s.store.RecordDelivered(userID, deviceID, incoming.Seq)
+	if err != nil {
+		s.logger.Warn("recording the acknowledgement", "error", err, "device_id", deviceID)
+		return
+	}
+	if count > 0 {
+		s.logger.Debug("delivery acknowledged", "device_id", deviceID,
+			"seq", incoming.Seq, "messages", count)
+	}
+}
+
+// recordSent notes that a message reached a device's socket. Only message
+// events carry a message; the others have nothing to record against.
+func (s *Server) recordSent(event store.Event, userID, deviceID int64) {
+	messageID := messageIDOf(event)
+	if messageID == 0 {
+		return
+	}
+	if err := s.store.RecordMessageEvent(messageID, userID, &deviceID, store.MessageSent); err != nil {
+		s.logger.Warn("recording the send", "error", err, "message_id", messageID)
+	}
+}
+
+// messageIDOf digs the message out of an event payload. Reading it back
+// from the payload rather than carrying it alongside means replayed events
+// are recorded exactly like live ones.
+func messageIDOf(event store.Event) int64 {
+	if event.Kind != eventMessageNew {
+		return 0
+	}
+	var envelope struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(event.Payload, &envelope); err != nil {
+		return 0
+	}
+	return envelope.ID
 }

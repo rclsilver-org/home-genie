@@ -10,6 +10,8 @@ import (
 // handleListMessages returns a channel's stream, newest first. Membership is
 // required, so a non-member gets the same 404 as everywhere else.
 func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
+	user, _ := UserFrom(r.Context())
+
 	channel, _, ok := s.channelForMember(w, r)
 	if !ok {
 		return
@@ -35,9 +37,23 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ids := make([]int64, 0, len(messages))
+	for _, message := range messages {
+		ids = append(ids, message.ID)
+	}
+	// One query for the whole batch rather than one per message.
+	read, err := s.store.ReadMessageIDs(user.ID, ids)
+	if err != nil {
+		s.logger.Error("reading the read state", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
 	payload := []messagePayload{}
 	for _, message := range messages {
-		payload = append(payload, toMessagePayload(message, channel.Slug))
+		entry := toMessagePayload(message, channel.Slug)
+		entry.Read = read[message.ID]
+		payload = append(payload, entry)
 	}
 	s.writeJSON(w, http.StatusOK, payload)
 }

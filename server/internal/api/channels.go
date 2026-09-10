@@ -18,6 +18,9 @@ type channelPayload struct {
 	Description string     `json:"description"`
 	MutedUntil  *time.Time `json:"muted_until"`
 	Role        string     `json:"role,omitempty"`
+	// Specific to the caller: a message read by one member stays unread for
+	// the others.
+	Unread int `json:"unread"`
 }
 
 type memberPayload struct {
@@ -48,9 +51,18 @@ func (s *Server) handleListChannels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	unread, err := s.store.UnreadCounts(user.ID)
+	if err != nil {
+		s.logger.Error("counting the unread messages", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
 	payload := []channelPayload{}
 	for _, membership := range memberships {
-		payload = append(payload, toChannelPayload(membership.Channel, membership.Role))
+		entry := toChannelPayload(membership.Channel, membership.Role)
+		entry.Unread = unread[membership.Channel.ID]
+		payload = append(payload, entry)
 	}
 	s.writeJSON(w, http.StatusOK, payload)
 }

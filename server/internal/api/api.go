@@ -53,6 +53,10 @@ func (s *Server) Routes() *http.ServeMux {
 
 	mux.Handle("GET /api/v1/channels/{id}/messages", device(s.handleListMessages))
 
+	mux.Handle("POST /api/v1/channels/{id}/read", device(s.handleMarkChannelRead))
+	mux.Handle("POST /api/v1/messages/{id}/read", device(s.handleMarkRead))
+	mux.Handle("GET /api/v1/messages/{id}/timeline", device(s.handleTimeline))
+
 	mux.Handle("GET /api/v1/ws", device(s.handleWS))
 
 	// Producer path. Registered last and at the root, where ntfy puts it:

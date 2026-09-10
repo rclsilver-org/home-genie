@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/rclsilver-org/home-notifications/server/internal/store"
 )
 
 // dial opens an authenticated socket against a live test server.
@@ -255,6 +257,109 @@ func waitFor(t *testing.T, condition func() bool, message string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal(message)
+}
+
+// The loop that makes a miss detectable: the server records "sent" when it
+// writes to a socket, the client acknowledges, and only then does the
+// message become "delivered". A sent with no delivered is the silent
+// failure this whole design exists to surface.
+func TestAcknowledgementTurnsSentIntoDelivered(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	channel, publishToken := issueChannelAndToken(t, repository, "mediacenter")
+
+	httpServer := httptest.NewServer(server.Routes())
+	t.Cleanup(httpServer.Close)
+
+	token := session(t, server, "thomas", testPassword)
+	conn := dial(t, httpServer.URL, token, 0)
+	readUntil(t, conn, frameReady)
+
+	publish(t, server, "mediacenter", publishToken, "a film", map[string]string{"Title": "Sonarr"})
+	event := readUntil(t, conn, eventMessageNew)
+
+	messages, err := repository.MessagesOf(store.MessageQuery{ChannelID: channel.ID, Limit: 1})
+	if err != nil || len(messages) == 0 {
+		t.Fatalf("messages = %+v err = %v", messages, err)
+	}
+	messageID := messages[0].ID
+
+	// Sent must already be there; delivered must not.
+	waitFor(t, func() bool { return timelineHas(t, repository, messageID, store.MessageSent) },
+		"the send was never recorded")
+	if timelineHas(t, repository, messageID, store.MessageDelivered) {
+		t.Fatal("delivered was recorded before the client acknowledged anything")
+	}
+
+	// The client acknowledges.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	payload, _ := json.Marshal(clientFrame{Kind: frameAck, Seq: event.Seq})
+	if err := conn.Write(ctx, websocket.MessageText, payload); err != nil {
+		t.Fatalf("acknowledging: %v", err)
+	}
+
+	waitFor(t, func() bool { return timelineHas(t, repository, messageID, store.MessageDelivered) },
+		"the acknowledgement did not produce a delivered entry")
+}
+
+// Acknowledging twice must not double the timeline: the cursor only moves
+// forward.
+func TestAcknowledgingTwiceRecordsOnce(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	channel, publishToken := issueChannelAndToken(t, repository, "mediacenter")
+
+	httpServer := httptest.NewServer(server.Routes())
+	t.Cleanup(httpServer.Close)
+
+	token := session(t, server, "thomas", testPassword)
+	conn := dial(t, httpServer.URL, token, 0)
+	readUntil(t, conn, frameReady)
+
+	publish(t, server, "mediacenter", publishToken, "a film", nil)
+	event := readUntil(t, conn, eventMessageNew)
+
+	messages, _ := repository.MessagesOf(store.MessageQuery{ChannelID: channel.ID, Limit: 1})
+	messageID := messages[0].ID
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	payload, _ := json.Marshal(clientFrame{Kind: frameAck, Seq: event.Seq})
+	for i := 0; i < 2; i++ {
+		if err := conn.Write(ctx, websocket.MessageText, payload); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	waitFor(t, func() bool { return timelineHas(t, repository, messageID, store.MessageDelivered) },
+		"no delivered entry")
+
+	// Leave the second acknowledgement time to be processed, then count.
+	time.Sleep(200 * time.Millisecond)
+	if n := timelineCount(t, repository, messageID, store.MessageDelivered); n != 1 {
+		t.Fatalf("%d delivered entries for two acknowledgements, want 1", n)
+	}
+}
+
+func timelineHas(t *testing.T, s *store.Store, messageID int64, kind string) bool {
+	t.Helper()
+	return timelineCount(t, s, messageID, kind) > 0
+}
+
+func timelineCount(t *testing.T, s *store.Store, messageID int64, kind string) int {
+	t.Helper()
+	entries, err := s.TimelineOf(messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.Kind == kind {
+			count++
+		}
+	}
+	return count
 }
 
 // The bug seen after a night of running: the client reconnects before the
