@@ -2,6 +2,7 @@ package io.github.rclsilver.home_notifications.net
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -59,3 +60,56 @@ class ApiClient(private val http: OkHttpClient = defaultClient()) {
             .build()
     }
 }
+
+/** Marks a message as read. Used when a notification is swiped away. */
+suspend fun markRead(serverUrl: String, token: String, messageId: Long): Result<Unit> =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val call = ApiClient.defaultClient().newCall(
+                Request.Builder()
+                    .url("${serverUrl.trimEnd('/')}/api/v1/messages/$messageId/read")
+                    .post(ByteArray(0).toRequestBody(null))
+                    .header("Authorization", "Bearer $token")
+                    .build()
+            )
+            call.execute().use { response ->
+                if (!response.isSuccessful) throw IOException("HTTP error ${response.code}")
+            }
+        }
+    }
+
+/** Lists the caller's channels, with their own unread count. */
+suspend fun listChannels(serverUrl: String, token: String): Result<List<ChannelPayload>> =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val call = ApiClient.defaultClient().newCall(
+                Request.Builder()
+                    .url("${serverUrl.trimEnd('/')}/api/v1/channels")
+                    .header("Authorization", "Bearer $token")
+                    .build()
+            )
+            call.execute().use { response ->
+                val text = response.body?.string().orEmpty()
+                if (!response.isSuccessful) throw IOException("HTTP error ${response.code}")
+                Json { ignoreUnknownKeys = true }
+                    .decodeFromString(ListSerializer(ChannelPayload.serializer()), text)
+            }
+        }
+    }
+
+/** Marks a whole channel as read for the caller. */
+suspend fun markChannelRead(serverUrl: String, token: String, channelId: Long): Result<Unit> =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val call = ApiClient.defaultClient().newCall(
+                Request.Builder()
+                    .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId/read")
+                    .post(ByteArray(0).toRequestBody(null))
+                    .header("Authorization", "Bearer $token")
+                    .build()
+            )
+            call.execute().use { response ->
+                if (!response.isSuccessful) throw IOException("HTTP error ${response.code}")
+            }
+        }
+    }

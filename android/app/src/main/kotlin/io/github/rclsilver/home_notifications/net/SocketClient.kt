@@ -16,7 +16,14 @@ private const val TAG = "HomeGenie"
 /** What the socket reports back to the service. */
 sealed interface SocketEvent {
     data object Connecting : SocketEvent
-    data object Open : SocketEvent
+
+    /**
+     * The socket is open. [send] emits — that is how the acknowledgement
+     * leaves, over the same connection as what it acknowledges, so that a
+     * dead socket makes the acknowledgement impossible rather than falsely
+     * successful.
+     */
+    data class Open(val send: (String) -> Boolean) : SocketEvent
     data class Received(val frame: Frame) : SocketEvent
     data class Closed(val reason: String) : SocketEvent
     data class Failed(val error: Throwable) : SocketEvent
@@ -50,7 +57,7 @@ class SocketClient(private val http: OkHttpClient = ApiClient.defaultClient()) {
 
         val socket = http.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                trySend(SocketEvent.Open)
+                trySend(SocketEvent.Open(webSocket::send))
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {

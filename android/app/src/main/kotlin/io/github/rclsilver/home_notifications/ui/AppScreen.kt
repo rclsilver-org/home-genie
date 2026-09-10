@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,7 +34,10 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import io.github.rclsilver.home_notifications.data.Settings
 import io.github.rclsilver.home_notifications.net.ApiClient
+import io.github.rclsilver.home_notifications.net.ChannelPayload
 import io.github.rclsilver.home_notifications.net.LoginRequest
+import io.github.rclsilver.home_notifications.net.listChannels
+import io.github.rclsilver.home_notifications.net.markChannelRead
 import io.github.rclsilver.home_notifications.service.ConnectionService
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -49,7 +53,16 @@ private const val DEFAULT_SERVER_URL = "http://192.0.2.10:8088"
 
 @Composable
 fun AppScreen(settings: Settings) {
+    val context = LocalContext.current
     val token by settings.token.collectAsState(initial = "")
+
+    // As soon as a session exists, the service must be running. Without this
+    // an application update — which kills the service without START_STICKY
+    // bringing it back — would leave the app silent while looking fine.
+    // Starting an already running service is a no-op.
+    LaunchedEffect(token) {
+        if (token.isNotEmpty()) ConnectionService.start(context)
+    }
 
     Scaffold { padding ->
         Column(
@@ -175,6 +188,9 @@ private fun DiagnosticCard(settings: Settings) {
     }
 
     Spacer(Modifier.height(8.dp))
+    ChannelsSection(settings)
+
+    Spacer(Modifier.height(8.dp))
     Text("Reliability", style = MaterialTheme.typography.titleMedium)
 
     reliabilityChecks(context).forEach { check ->
@@ -221,3 +237,64 @@ private val formatter = SimpleDateFormat("MM-dd HH:mm:ss", Locale.ROOT)
 
 private fun timestamp(millis: Long): String =
     if (millis == 0L) "—" else formatter.format(Date(millis))
+
+/**
+ * The caller's channels, with **their** unread count: a message read by one
+ * member stays unread for the others.
+ */
+@Composable
+private fun ChannelsSection(settings: Settings) {
+    val scope = rememberCoroutineScope()
+    val serverUrl by settings.serverUrl.collectAsState(initial = "")
+    val token by settings.token.collectAsState(initial = "")
+    var channels by remember { mutableStateOf<List<ChannelPayload>>(emptyList()) }
+    var error by remember { mutableStateOf("") }
+
+    // Reloaded when shown and on every event received: the counter follows
+    // the incoming messages without having to be recomputed locally.
+    val events by ConnectionService.observedState.collectAsState()
+    LaunchedEffect(serverUrl, token, events.events) {
+        if (serverUrl.isEmpty() || token.isEmpty()) return@LaunchedEffect
+        listChannels(serverUrl, token)
+            .onSuccess { channels = it; error = "" }
+            .onFailure { error = it.message ?: "failed" }
+    }
+
+    Text("Channels", style = MaterialTheme.typography.titleMedium)
+    if (error.isNotEmpty()) {
+        Text(error, color = MaterialTheme.colorScheme.error)
+    }
+    if (channels.isEmpty() && error.isEmpty()) {
+        Text("no channel", style = MaterialTheme.typography.bodySmall)
+    }
+
+    channels.forEach { channel ->
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column {
+                    Text(channel.name.ifEmpty { channel.slug },
+                        style = MaterialTheme.typography.titleSmall)
+                    Text("${channel.slug} · ${channel.role}",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                if (channel.unread > 0) {
+                    TextButton(onClick = {
+                        scope.launch {
+                            markChannelRead(serverUrl, token, channel.id)
+                            listChannels(serverUrl, token)
+                                .onSuccess { channels = it }
+                        }
+                    }) {
+                        Text("${channel.unread} non lus")
+                    }
+                } else {
+                    Text("up to date", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
