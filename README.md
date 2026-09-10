@@ -97,7 +97,38 @@ adb logcat -s HomeNotifications
 development server, never through `adb reverse`: adb-over-WiFi drops with the phone's
 deep sleep, and a broken tunnel would be indistinguishable from a server outage during
 the overnight survival test.
-## Paquet Debian
+## Checks before the host
+
+Three things cannot be proved by a unit test, and are therefore checked locally without
+putting anything on the target host.
+
+**The WebSocket proxy.** An nginx in a container carrying *exactly* the configuration
+the reverse proxy serves — `websocket` is `true` by default, hence the
+`Upgrade`/`Connection` headers, `proxy_buffering off` and `proxy_read_timeout 3600s`.
+A socket opened through that proxy over TLS does receive the live events, not only the
+replay. The `hnotifd` vhost is therefore a copy of the ntfy one.
+
+Beware of a coupling nothing signals in the nginx configuration: the heartbeat interval
+must stay well below `proxy_read_timeout`, since every beat rearms that counter.
+Spacing the heartbeats out beyond it to save battery would have nginx cut the socket.
+
+**The arm64 binary.** Run under `qemu-aarch64` — provided by nixpkgs, so with no
+privilege and no change to `binfmt_misc`:
+
+```sh
+nix-shell -p qemu --run 'qemu-aarch64 ./dist/hnotifd-linux-arm64 -version'
+```
+
+It starts, migrates its database and answers on `/healthz`. That is what proves the
+pure-Go SQLite bet holds on the target architecture.
+
+**The arm64 package.** Built and installed inside an amd64 Debian container with
+`--force-architecture`: the `postinst` creates the user and the directory tree, the
+permissions are right, and a purge keeps the state.
+
+The Debian container must be started with `--platform linux/amd64` if an arm64 image of
+the same tag is lying around in the Docker cache.
+## Debian package
 
 Built by CI (`jiro4989/build-deb-action`) and published in the release with the
 binaries: `latest` as a prerelease on every push to `master`, a tagged release on

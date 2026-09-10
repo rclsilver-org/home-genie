@@ -15,6 +15,11 @@ import (
 const (
 	// heartbeatInterval is how often the server proves the socket is alive.
 	//
+	// It also has to stay well under the reverse proxy's read timeout: each
+	// heartbeat rearms that timer, and spacing them beyond it to save
+	// battery would have the proxy cut the socket instead. The two values
+	// are coupled and nothing in the proxy configuration says so.
+	//
 	// It is an application-level frame, not a protocol ping, because the app
 	// has to *see* it: a socket the system has silently wedged stays open
 	// as far as the OS is concerned, and only a missing heartbeat reveals
