@@ -57,7 +57,14 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.Handle("POST /api/v1/messages/{id}/read", device(s.handleMarkRead))
 	mux.Handle("GET /api/v1/messages/{id}/timeline", device(s.handleTimeline))
 
+	mux.Handle("GET /api/v1/channels/{id}/alerts", device(s.handleListAlerts))
+	mux.Handle("POST /api/v1/alerts/{id}/ack", device(s.handleAckAlert))
+
 	mux.Handle("GET /api/v1/ws", device(s.handleWS))
+
+	// Alertmanager posts here, authenticated like any other producer.
+	mux.Handle("POST /api/v1/ingest/alertmanager/{slug}",
+		s.requirePublishToken(http.HandlerFunc(s.handleIngestAlertmanager)))
 
 	// Producer path. Registered last and at the root, where ntfy puts it:
 	// the more specific /api/... patterns win under Go 1.22 routing, and
