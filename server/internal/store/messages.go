@@ -182,3 +182,96 @@ func hydrate(message Message, alertID sql.NullInt64, tags, actions, created stri
 	message.CreatedAt, _ = parseTime(created)
 	return message, nil
 }
+
+// FeedQuery bounds the cross-channel listing that feeds the notifications
+// view.
+type FeedQuery struct {
+	// OnlyUnread is the working state of that view: what is left to look at.
+	OnlyUnread bool
+	// BeforeID pages backwards; 0 starts at the newest.
+	BeforeID int64
+	Limit    int
+}
+
+// MessagesForUser returns, across every channel the user belongs to, the
+// messages that are not alerts, newest first.
+//
+// Alert-backed messages are excluded rather than filtered by the client:
+// alerts have a console of their own, with a lifecycle the read state does
+// not describe, and their reminders would flood a feed whose whole purpose
+// is to be emptied by reading it.
+func (s *Store) MessagesForUser(userID int64, query FeedQuery) ([]Message, error) {
+	if query.Limit <= 0 || query.Limit > 200 {
+		query.Limit = 50
+	}
+
+	sqlText := `SELECT m.id, m.channel_id, m.alert_id, m.title, m.body, m.priority,
+	                   m.tags, m.click_url, m.actions, m.created_at
+	              FROM messages m
+	              JOIN channel_members c ON c.channel_id = m.channel_id AND c.user_id = ?
+	             WHERE m.alert_id IS NULL`
+	args := []any{userID}
+	if query.OnlyUnread {
+		sqlText += ` AND NOT EXISTS (SELECT 1 FROM message_reads r
+		                              WHERE r.message_id = m.id AND r.user_id = ?)`
+		args = append(args, userID)
+	}
+	if query.BeforeID > 0 {
+		sqlText += ` AND m.id < ?`
+		args = append(args, query.BeforeID)
+	}
+	sqlText += ` ORDER BY m.id DESC LIMIT ?`
+	args = append(args, query.Limit)
+
+	rows, err := s.db.Query(sqlText, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing the messages: %w", err)
+	}
+	defer rows.Close()
+
+	messages := []Message{}
+	for rows.Next() {
+		message, err := scanMessageRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, message)
+	}
+	return messages, rows.Err()
+}
+
+// MarkFeedRead marks every message the user can read and has not read yet,
+// alerts excluded for the same reason they are absent from the feed.
+// Returns the ids actually marked.
+func (s *Store) MarkFeedRead(userID int64, deviceID *int64) ([]int64, error) {
+	rows, err := s.db.Query(
+		`SELECT m.id FROM messages m
+		   JOIN channel_members c ON c.channel_id = m.channel_id AND c.user_id = ?
+		  WHERE m.alert_id IS NULL
+		    AND NOT EXISTS (SELECT 1 FROM message_reads r
+		                     WHERE r.message_id = m.id AND r.user_id = ?)`,
+		userID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("listing the unread messages: %w", err)
+	}
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("reading a message: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for _, id := range ids {
+		if _, err := s.MarkRead(id, userID, deviceID); err != nil {
+			return ids, err
+		}
+	}
+	return ids, nil
+}

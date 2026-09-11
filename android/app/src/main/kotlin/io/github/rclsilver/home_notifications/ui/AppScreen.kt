@@ -1,5 +1,6 @@
 package io.github.rclsilver.home_notifications.ui
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -109,6 +110,7 @@ fun AppScreen(settings: Settings) {
                                 AlertDetailScreen(serverUrl, token, opened) { openAlert = null }
                             }
                         }
+                        Destination.NOTIFICATIONS -> NotificationsScreen(serverUrl, token)
                         Destination.CHANNELS -> ChannelsScreen(settings) { openChannel = it }
                         Destination.DIAGNOSTIC -> DiagnosticCard(settings)
                     }
@@ -431,6 +433,7 @@ private fun ReliabilityBanner(state: ConnectionService.State) {
 /** The three views, in order of importance. */
 enum class Destination(val label: String) {
     ALERTS("Alerts"),
+    NOTIFICATIONS("Notifications"),
     CHANNELS("Canaux"),
     DIAGNOSTIC("Diagnostic"),
 }
@@ -438,7 +441,8 @@ enum class Destination(val label: String) {
 @Composable
 private fun Destinations(current: Destination, onSelect: (Destination) -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        // Four tabs do not always fit: they scroll rather than get truncated.
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Destination.entries.forEach { destination ->

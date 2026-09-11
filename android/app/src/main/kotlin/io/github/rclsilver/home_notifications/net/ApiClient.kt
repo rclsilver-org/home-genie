@@ -168,6 +168,40 @@ suspend fun fetchMessages(serverUrl: String, token: String, channelId: Long, lim
     }
 }
 
+/**
+ * The caller's notifications, across every channel.
+ *
+ * The server keeps alerts out of it: they have a console of their own, and
+ * a lifecycle that "read / unread" does not describe.
+ */
+suspend fun fetchFeed(serverUrl: String, token: String, unreadOnly: Boolean, limit: Int = 100):
+    Result<List<MessagePayload>> = withContext(Dispatchers.IO) {
+    runCatching {
+        val suffix = if (unreadOnly) "?unread=1&limit=$limit" else "?limit=$limit"
+        get(serverUrl, token, "/api/v1/messages$suffix") { text ->
+            Json { ignoreUnknownKeys = true }
+                .decodeFromString(ListSerializer(MessagePayload.serializer()), text)
+        }
+    }
+}
+
+/** Marks the whole notification feed as read, for this user alone. */
+suspend fun markFeedRead(serverUrl: String, token: String): Result<Unit> =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val call = ApiClient.defaultClient().newCall(
+                Request.Builder()
+                    .url("${serverUrl.trimEnd('/')}/api/v1/messages/read")
+                    .post(ByteArray(0).toRequestBody(null))
+                    .header("Authorization", "Bearer $token")
+                    .build()
+            )
+            call.execute().use { response ->
+                if (!response.isSuccessful) throw IOException("HTTP error ${response.code}")
+            }
+        }
+    }
+
 /** A channel's alerts; openOnly restricts to those still open. */
 suspend fun fetchAlerts(serverUrl: String, token: String, channelId: Long, openOnly: Boolean):
     Result<List<AlertPayload>> = withContext(Dispatchers.IO) {

@@ -58,6 +58,8 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.Handle("GET /api/v1/channels/{id}/messages", device(s.handleListMessages))
 
 	mux.Handle("POST /api/v1/channels/{id}/read", device(s.handleMarkChannelRead))
+	mux.Handle("GET /api/v1/messages", device(s.handleListFeed))
+	mux.Handle("POST /api/v1/messages/read", device(s.handleMarkFeedRead))
 	mux.Handle("POST /api/v1/messages/{id}/read", device(s.handleMarkRead))
 	mux.Handle("GET /api/v1/messages/{id}/timeline", device(s.handleTimeline))
 
