@@ -524,3 +524,43 @@ suspend fun removeMember(serverUrl: String, token: String, channelId: Long, user
         }
     }
 }
+
+/** A channel's quiet-hours windows. */
+suspend fun fetchQuietHours(serverUrl: String, token: String, channelId: Long):
+    Result<List<QuietHoursPayload>> = withContext(Dispatchers.IO) {
+    runCatching {
+        get(serverUrl, token, "/api/v1/channels/$channelId/quiet-hours") { text ->
+            Json { ignoreUnknownKeys = true }
+                .decodeFromString(ListSerializer(QuietHoursPayload.serializer()), text)
+        }
+    }
+}
+
+/**
+ * Sets a window, or removes it when both bounds are empty — which is what
+ * an emptied form means, and the server reads it that way.
+ */
+suspend fun setQuietHours(serverUrl: String, token: String, channelId: Long,
+                          window: QuietHoursPayload): Result<Unit> =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val payload = Json.encodeToString(QuietHoursPayload.serializer(), window)
+            val call = ApiClient.defaultClient().newCall(
+                Request.Builder()
+                    .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId/quiet-hours")
+                    .put(payload.toRequestBodyJson())
+                    .header("Authorization", "Bearer $token")
+                    .build()
+            )
+            call.execute().use { response ->
+                val text = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    val message = runCatching {
+                        Json { ignoreUnknownKeys = true }
+                            .decodeFromString(ErrorResponse.serializer(), text).error
+                    }.getOrElse { "HTTP error ${response.code}" }
+                    throw IOException(message)
+                }
+            }
+        }
+    }

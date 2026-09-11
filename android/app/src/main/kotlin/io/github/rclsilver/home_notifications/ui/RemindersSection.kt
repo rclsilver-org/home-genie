@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -81,8 +80,6 @@ private fun ReminderCard(
     var minutes by remember(current) {
         mutableStateOf((current?.intervalMinutes ?: 0).toString())
     }
-    var quietFrom by remember(current) { mutableStateOf(current?.quietFrom ?: "") }
-    var quietTo by remember(current) { mutableStateOf(current?.quietTo ?: "") }
     var enabled by remember(current) { mutableStateOf(current?.enabled ?: false) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -115,39 +112,11 @@ private fun ReminderCard(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            // The two go together: the server refuses a half-given window,
-            // because it would silence at an unpredictable hour.
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = quietFrom,
-                    onValueChange = { quietFrom = it },
-                    label = { Text("Calme de") },
-                    placeholder = { Text("23:00") },
-                    singleLine = true,
-                    modifier = Modifier.width(150.dp),
-                )
-                OutlinedTextField(
-                    value = quietTo,
-                    onValueChange = { quietTo = it },
-                    label = { Text("to") },
-                    placeholder = { Text("07:00") },
-                    singleLine = true,
-                    modifier = Modifier.width(150.dp),
-                )
-            }
-            Text(
-                "Quiet hours push the reminder back to the end of the window, " +
-                    "they do not drop it.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-
             TextButton(onClick = {
                 onSave(
                     ReminderPolicyPayload(
                         severity = severity,
                         intervalSeconds = (minutes.toIntOrNull() ?: 0) * 60,
-                        quietFrom = quietFrom.trim(),
-                        quietTo = quietTo.trim(),
                         enabled = enabled,
                     )
                 )

@@ -78,8 +78,6 @@ data class AlertPayload(
 data class ReminderPolicyPayload(
     val severity: String,
     @SerialName("interval_seconds") val intervalSeconds: Int = 0,
-    @SerialName("quiet_from") val quietFrom: String = "",
-    @SerialName("quiet_to") val quietTo: String = "",
     val enabled: Boolean = false,
     val scope: String = "",
 ) {
@@ -154,3 +152,18 @@ data class MemberPayload(
 /** Response of `/api/v1/messages/unread`. */
 @Serializable
 data class UnreadCountPayload(val count: Int = 0)
+
+/**
+ * A quiet-hours window.
+ *
+ * [severity] empty covers the whole scope — the only form that makes sense
+ * on a notifications channel, where there is no severity. A broad window
+ * never covers criticals: silencing those is asked for by naming
+ * `critical`.
+ */
+@Serializable
+data class QuietHoursPayload(
+    val severity: String = "",
+    val from: String = "",
+    val to: String = "",
+)
