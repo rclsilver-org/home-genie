@@ -16,6 +16,10 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- Without it, the flag that makes a critical alert pierce Do Not Disturb
+         is ignored in silence. -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+
     <application
         android:allowBackup="false"
         android:networkSecurityConfig="@xml/network_security_config"

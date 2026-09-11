@@ -1,5 +1,6 @@
 package io.github.rclsilver.home_notifications.ui
 
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -60,6 +61,18 @@ fun pendingChecks(context: Context, symptom: Boolean): List<ReliabilityCheck> {
                 Intent(AndroidSettings.ACTION_APP_NOTIFICATION_SETTINGS)
                     .putExtra(AndroidSettings.EXTRA_APP_PACKAGE, context.packageName)
             },
+        )
+    }
+
+    val notifications =
+        context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    if (!notifications.isNotificationPolicyAccessGranted) {
+        checks += ReliabilityCheck(
+            label = "Do Not Disturb access",
+            explanation = "Without this access a critical alert stays silent while " +
+                "the phone is in Do Not Disturb: Android ignores the flag without " +
+                "saying a word.",
+            fix = { Intent(AndroidSettings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS) },
         )
     }
 

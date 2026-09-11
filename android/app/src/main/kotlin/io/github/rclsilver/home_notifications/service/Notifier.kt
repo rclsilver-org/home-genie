@@ -53,6 +53,14 @@ class Notifier(private val context: Context) {
             .setAutoCancel(true)
             .setWhen(System.currentTimeMillis())
 
+        // The category decides the fate of the notification under Do Not
+        // Disturb: an alert at maximum priority is an alarm, everything else
+        // is a message.
+        builder.setCategory(
+            if (message.priority >= 5) Notification.CATEGORY_ALARM
+            else Notification.CATEGORY_MESSAGE
+        )
+
         // "Acknowledge" only appears on a message reporting an alert. It is
         // the central gesture: stopping the reminders without unlocking the
         // phone. Distinct from swiping, which only marks it read and lets the
@@ -78,9 +86,29 @@ class Notifier(private val context: Context) {
         manager.notify(message.channelSlug, message.id.toInt(), notification)
     }
 
+    /**
+     * The Android channel matching (server channel, priority).
+     *
+     * Priority 5 pierces Do Not Disturb — that is the reason an alert channel
+     * exists: to wake someone. Android honours that flag only if notification
+     * policy access has been granted, and ignores it silently otherwise; the
+     * reliability screen is the only place where that gap becomes visible.
+     * manque devient visible.
+     */
     private fun ensureChannel(slug: String, priority: Int): String {
         val id = "ch_${slug}_p$priority"
-        if (manager.getNotificationChannel(id) != null) return id
+        val bypass = priority >= 5 && manager.isNotificationPolicyAccessGranted
+
+        val existing = manager.getNotificationChannel(id)
+        if (existing != null) {
+            // The importance of an existing channel can no longer change, but
+            // Do Not Disturb bypass can: the permission may have been granted
+            // after the first alert.
+            if (bypass && !existing.canBypassDnd()) {
+                manager.createNotificationChannel(existing.apply { setBypassDnd(true) })
+            }
+            return id
+        }
 
         val importance = when (priority) {
             5 -> NotificationManager.IMPORTANCE_HIGH
@@ -93,6 +121,7 @@ class Notifier(private val context: Context) {
         manager.createNotificationChannel(
             NotificationChannel(id, "$slug — priority $priority", importance).apply {
                 description = "Priority $priority messages of channel $slug"
+                setBypassDnd(bypass)
             }
         )
         return id
