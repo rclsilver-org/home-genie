@@ -65,6 +65,10 @@
             android:exported="false" />
 
         <receiver
+            android:name=".service.MuteReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".service.DismissReceiver"
             android:exported="false" />
 
