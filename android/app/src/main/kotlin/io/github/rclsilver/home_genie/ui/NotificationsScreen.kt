@@ -1,20 +1,21 @@
 package io.github.rclsilver.home_genie.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -24,10 +25,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
-import io.github.rclsilver.home_genie.net.MessagePayload
 import io.github.rclsilver.home_genie.net.fetchFeed
 import io.github.rclsilver.home_genie.net.markFeedRead
 import io.github.rclsilver.home_genie.net.markRead
+import io.github.rclsilver.home_genie.net.MessagePayload
 import io.github.rclsilver.home_genie.service.ConnectionService
 
 /**
@@ -93,20 +94,28 @@ fun NotificationsScreen(serverUrl: String, token: String) {
     }
 
     messages.forEach { message ->
-        NotificationRow(message) {
+        NotificationRow(message, serverUrl, token) {
             scope.launch { markRead(serverUrl, token, message.id).onSuccess { reloads++ } }
         }
     }
 }
 
 @Composable
-private fun NotificationRow(message: MessagePayload, onRead: () -> Unit) {
+private fun NotificationRow(message: MessagePayload, serverUrl: String, token: String,
+                            onRead: () -> Unit) {
+    // Collapsed by default: the timeline is a diagnostic tool, not something
+    // wanted on every line of the feed. It followed the messages here when
+    // the channel page became administrative — this is the only screen where
+    // a message is still read.
+    var showTimeline by remember(message.id) { mutableStateOf(false) }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = if (message.read) MaterialTheme.colorScheme.surface
             else MaterialTheme.colorScheme.surfaceVariant,
         ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         // Opening means reading: it is the only gesture these objects expect,
         // and asking for a second tap on a "mark as read" button would be
         // ceremony for nothing.
@@ -121,15 +130,28 @@ private fun NotificationRow(message: MessagePayload, onRead: () -> Unit) {
             if (message.body.isNotEmpty()) {
                 Text(message.body, style = MaterialTheme.typography.bodyMedium)
             }
-            Text(
-                buildString {
-                    append(message.channelSlug)
-                    if (message.tags.isNotEmpty()) {
-                        append(" · ").append(message.tags.joinToString(", "))
-                    }
-                },
-                style = MaterialTheme.typography.bodySmall,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    buildString {
+                        append(message.channelSlug)
+                        if (message.tags.isNotEmpty()) {
+                            append(" · ").append(message.tags.joinToString(", "))
+                        }
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                TextButton(onClick = { showTimeline = !showTimeline }) {
+                    Text(if (showTimeline) "Hide" else "Distribution")
+                }
+            }
+
+            if (showTimeline) {
+                TimelinePanel(message.id, serverUrl, token)
+            }
         }
     }
 }

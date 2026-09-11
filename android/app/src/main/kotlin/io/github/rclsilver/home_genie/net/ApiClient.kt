@@ -564,3 +564,30 @@ suspend fun setQuietHours(serverUrl: String, token: String, channelId: Long,
             }
         }
     }
+
+/**
+ * Deletes a channel. The server cascades the cleanup: messages, alerts,
+ * members, tokens. Nothing survives, and nothing is recoverable.
+ */
+suspend fun deleteChannel(serverUrl: String, token: String, channelId: Long): Result<Unit> =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val call = ApiClient.defaultClient().newCall(
+                Request.Builder()
+                    .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId")
+                    .delete()
+                    .header("Authorization", "Bearer $token")
+                    .build()
+            )
+            call.execute().use { response ->
+                val text = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    val message = runCatching {
+                        Json { ignoreUnknownKeys = true }
+                            .decodeFromString(ErrorResponse.serializer(), text).error
+                    }.getOrElse { "HTTP error ${response.code}" }
+                    throw IOException(message)
+                }
+            }
+        }
+    }

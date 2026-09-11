@@ -37,11 +37,13 @@ import java.time.temporal.ChronoUnit
 import io.github.rclsilver.home_genie.service.ConnectionService
 
 /**
- * A channel's feed, plus the console of its open alerts.
+ * A channel's administration page.
  *
- * The open alerts come first and are not mixed into the feed: what demands an
- * action must be visible without scrolling, and an alert stays open until it
- * is resolved, whereas a message is a past event.
+ * Nothing is read here: neither the alerts nor the messages. They have screens
+ * of their own, where they are read across every channel at once, and
+ * repeating them here made this page two things at once — somewhere one comes
+ * to change something, and somewhere one comes to see what is happening. The
+ * settings drowned under the feed.
  */
 @Composable
 fun ChannelScreen(
@@ -49,70 +51,10 @@ fun ChannelScreen(
     serverUrl: String,
     token: String,
 ) {
-    val scope = rememberCoroutineScope()
-    var messages by remember { mutableStateOf<List<MessagePayload>>(emptyList()) }
-    var alerts by remember { mutableStateOf<List<AlertPayload>>(emptyList()) }
-    var error by remember { mutableStateOf("") }
-
-    // Reloaded on every event received on the socket: the list follows what
-    // arrives without duplicating the server's logic on the client side.
-    val state by ConnectionService.observedState.collectAsState()
-    LaunchedEffect(channel.id, state.events) {
-        fetchMessages(serverUrl, token, channel.id)
-            .onSuccess { messages = it; error = "" }
-            .onFailure { error = it.message ?: "loading failed" }
-        fetchAlerts(serverUrl, token, channel.id, openOnly = true)
-            .onSuccess { alerts = it }
-    }
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column {
-            Text(channel.name.ifEmpty { channel.slug },
-                style = MaterialTheme.typography.headlineSmall)
-            Text(channel.slug, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-
-    if (error.isNotEmpty()) {
-        Text(error, color = MaterialTheme.colorScheme.error)
-    }
-
-    if (alerts.isNotEmpty()) {
-        Text("Alertes ouvertes", style = MaterialTheme.typography.titleMedium)
-        alerts.forEach { alert ->
-            AlertCard(alert) {
-                scope.launch {
-                    ackAlert(serverUrl, token, alert.id)
-                    fetchAlerts(serverUrl, token, channel.id, openOnly = true)
-                        .onSuccess { alerts = it }
-                }
-            }
-        }
-    }
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text("Messages", style = MaterialTheme.typography.titleMedium)
-        if (messages.any { !it.read }) {
-            TextButton(onClick = {
-                scope.launch {
-                    markChannelReadUpTo(serverUrl, token, channel.id, 0)
-                    fetchMessages(serverUrl, token, channel.id)
-                        .onSuccess { messages = it }
-                }
-            }) { Text("Mark all read") }
-        }
-    }
-
-    if (messages.isEmpty()) {
-        Text("no message", style = MaterialTheme.typography.bodySmall)
+    Column {
+        Text(channel.name.ifEmpty { channel.slug },
+            style = MaterialTheme.typography.headlineSmall)
+        Text(channel.slug, style = MaterialTheme.typography.bodySmall)
     }
 
     MuteRow(channel, serverUrl, token)
@@ -124,98 +66,6 @@ fun ChannelScreen(
     MembersSection(channel.id, serverUrl, token, isOwner = channel.role == "owner")
 
     TokensSection(channel.id, channel.slug, serverUrl, token)
-
-    Text("Messages", style = MaterialTheme.typography.titleMedium)
-    messages.forEach { message ->
-        MessageCard(
-            message = message,
-            serverUrl = serverUrl,
-            token = token,
-            onRead = {
-                scope.launch {
-                    markRead(serverUrl, token, message.id)
-                    fetchMessages(serverUrl, token, channel.id)
-                        .onSuccess { messages = it }
-                }
-            },
-        )
-    }
-}
-
-@Composable
-private fun AlertCard(alert: AlertPayload, onAck: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer,
-        ),
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(alert.title, style = MaterialTheme.typography.titleSmall)
-            Text(alert.body, style = MaterialTheme.typography.bodySmall)
-            Text(
-                alert.labels.entries.joinToString(" · ") { "${it.key}=${it.value}" },
-                style = MaterialTheme.typography.bodySmall,
-            )
-            if (alert.isAcked) {
-                // Acknowledged but still open: show who took it, because that
-                // is the information ntfy was missing.
-                Text("taken by ${alert.ackedBy}", style = MaterialTheme.typography.labelMedium)
-            } else {
-                TextButton(onClick = onAck) { Text("Acknowledge") }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MessageCard(
-    message: MessagePayload,
-    serverUrl: String,
-    token: String,
-    onRead: () -> Unit,
-) {
-    // Collapsed by default: the timeline is a diagnostic tool, not something
-    // one wants to see on every message of the feed.
-    var showTimeline by remember(message.id) { mutableStateOf(false) }
-
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                message.title.ifEmpty { "(untitled)" },
-                style = MaterialTheme.typography.titleSmall,
-                // Bold carries the unread state: discreet, and specific to the
-                // caller — a message read by one member stays bold for the others.
-                fontWeight = if (message.read) FontWeight.Normal else FontWeight.Bold,
-            )
-            if (message.body.isNotEmpty()) {
-                Text(message.body, style = MaterialTheme.typography.bodyMedium)
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    "priority ${message.priority}" +
-                        if (message.tags.isEmpty()) "" else " · " + message.tags.joinToString(", "),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = { showTimeline = !showTimeline }) {
-                        Text(if (showTimeline) "Hide" else "Distribution")
-                    }
-                    if (!message.read) {
-                        TextButton(onClick = onRead) { Text("Lu") }
-                    }
-                }
-            }
-
-            if (showTimeline) {
-                TimelinePanel(message.id, serverUrl, token)
-            }
-        }
-    }
 }
 
 /**

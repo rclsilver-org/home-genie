@@ -1,39 +1,43 @@
 package io.github.rclsilver.home_genie.ui
 
 import android.content.Context
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.rememberDrawerState
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.Icons
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -43,21 +47,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.launch
-import io.github.rclsilver.home_genie.MainActivity
-import io.github.rclsilver.home_genie.data.Settings
-import io.github.rclsilver.home_genie.net.ApiClient
-import io.github.rclsilver.home_genie.net.ChannelPayload
-import io.github.rclsilver.home_genie.net.LoginRequest
-import io.github.rclsilver.home_genie.net.CreateChannelRequest
-import io.github.rclsilver.home_genie.net.createChannel
-import io.github.rclsilver.home_genie.net.fetchUnreadFeedCount
-import io.github.rclsilver.home_genie.net.listChannels
-import io.github.rclsilver.home_genie.net.markChannelRead
-import io.github.rclsilver.home_genie.service.ConnectionService
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.launch
+import io.github.rclsilver.home_genie.data.Settings
+import io.github.rclsilver.home_genie.MainActivity
+import io.github.rclsilver.home_genie.net.ApiClient
+import io.github.rclsilver.home_genie.net.ChannelPayload
+import io.github.rclsilver.home_genie.net.createChannel
+import io.github.rclsilver.home_genie.net.CreateChannelRequest
+import io.github.rclsilver.home_genie.net.deleteChannel
+import io.github.rclsilver.home_genie.net.fetchUnreadFeedCount
+import io.github.rclsilver.home_genie.net.listChannels
+import io.github.rclsilver.home_genie.net.LoginRequest
+import io.github.rclsilver.home_genie.net.markChannelRead
+import io.github.rclsilver.home_genie.service.ConnectionService
 
 /**
  * Address pre-filled on the first sign-in, purely for convenience. Port 8088
@@ -119,6 +124,14 @@ fun AppScreen(settings: Settings) {
             }
         }
         return
+    }
+
+    // The system back does the same as the arrow: close what is open on top
+    // of the section. Without it, back left the application from inside a
+    // channel, which is never what pressing back asks for.
+    BackHandler(enabled = openChannel != null || openAlert != null) {
+        openChannel = null
+        openAlert = null
     }
 
     ModalNavigationDrawer(
@@ -410,9 +423,13 @@ private fun ChannelsSection(settings: Settings, onOpenChannel: (ChannelPayload) 
         Text("no channel", style = MaterialTheme.typography.bodySmall)
     }
 
+    // The channel whose deletion was asked for, awaiting confirmation.
+    var pendingDelete by remember { mutableStateOf<ChannelPayload?>(null) }
+
     channels.forEach { channel ->
         Card(
             modifier = Modifier.fillMaxWidth(),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
             onClick = { onOpenChannel(channel) },
         ) {
             Row(
@@ -426,23 +443,69 @@ private fun ChannelsSection(settings: Settings, onOpenChannel: (ChannelPayload) 
                     Text("${channel.slug} · ${channel.role}",
                         style = MaterialTheme.typography.bodySmall)
                 }
-                if (channel.unread > 0) {
-                    TextButton(onClick = {
-                        scope.launch {
-                            markChannelRead(serverUrl, token, channel.id)
-                            listChannels(serverUrl, token)
-                                .onSuccess { channels = it }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (channel.unread > 0) {
+                        TextButton(onClick = {
+                            scope.launch {
+                                markChannelRead(serverUrl, token, channel.id)
+                                listChannels(serverUrl, token)
+                                    .onSuccess { channels = it }
+                            }
+                        }) {
+                            Text("${channel.unread} unread")
                         }
-                    }) {
-                        Text("${channel.unread} non lus")
                     }
-                } else {
-                    Text("up to date", style = MaterialTheme.typography.bodySmall)
+                    // Only an owner can delete, and the server checks it
+                    // anyway: offering the gesture to someone who cannot do
+                    // it would only produce a refusal.
+                    if (channel.role == "owner") {
+                        IconButton(onClick = { pendingDelete = channel }) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = "Delete ${channel.slug}",
+                            )
+                        }
+                    }
                 }
             }
         }
     }
+
+    // A confirmation that says what disappears, and names the channel. A
+    // deletion takes the messages, the alerts and the tokens with it: it is
+    // the only gesture in this application that destroys something for
+    // everyone, and nothing undoes it.
+    pendingDelete?.let { doomed ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Delete '${doomed.slug}'?") },
+            text = {
+                Text(
+                    "Its messages, its alerts, its members and its publish " +
+                        "tokens go with it. Producers that published there " +
+                        "will get an error. This is permanent."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingDelete = null
+                    scope.launch {
+                        deleteChannel(serverUrl, token, doomed.id)
+                            .onSuccess {
+                                error = ""
+                                listChannels(serverUrl, token).onSuccess { channels = it }
+                            }
+                            .onFailure { error = it.message ?: "deletion failed" }
+                    }
+                }) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+            },
+        )
+    }
 }
+
 
 /**
  * Creating a channel.
