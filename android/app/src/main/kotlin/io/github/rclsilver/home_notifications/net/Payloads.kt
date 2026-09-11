@@ -146,3 +146,7 @@ data class MemberPayload(
     @SerialName("display_name") val displayName: String = "",
     val role: String = "",
 )
+
+/** Response of `/api/v1/messages/unread`. */
+@Serializable
+data class UnreadCountPayload(val count: Int = 0)

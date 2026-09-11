@@ -185,6 +185,17 @@ suspend fun fetchFeed(serverUrl: String, token: String, unreadOnly: Boolean, lim
     }
 }
 
+/** The number of unread notifications, for the menu badge. */
+suspend fun fetchUnreadFeedCount(serverUrl: String, token: String): Result<Int> =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            get(serverUrl, token, "/api/v1/messages/unread") { text ->
+                Json { ignoreUnknownKeys = true }
+                    .decodeFromString(UnreadCountPayload.serializer(), text).count
+            }
+        }
+    }
+
 /** Marks the whole notification feed as read, for this user alone. */
 suspend fun markFeedRead(serverUrl: String, token: String): Result<Unit> =
     withContext(Dispatchers.IO) {

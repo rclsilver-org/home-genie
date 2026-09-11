@@ -48,7 +48,6 @@ fun ChannelScreen(
     channel: ChannelPayload,
     serverUrl: String,
     token: String,
-    onBack: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var messages by remember { mutableStateOf<List<MessagePayload>>(emptyList()) }
@@ -76,7 +75,6 @@ fun ChannelScreen(
                 style = MaterialTheme.typography.headlineSmall)
             Text(channel.slug, style = MaterialTheme.typography.bodySmall)
         }
-        TextButton(onClick = onBack) { Text("Retour") }
     }
 
     if (error.isNotEmpty()) {

@@ -41,7 +41,7 @@ import io.github.rclsilver.home_notifications.service.ConnectionService
  * scroll in both cases.
  */
 @Composable
-fun AlertDetailScreen(serverUrl: String, token: String, alertId: Long, onBack: () -> Unit) {
+fun AlertDetailScreen(serverUrl: String, token: String, alertId: Long) {
     val scope = rememberCoroutineScope()
     var detail by remember { mutableStateOf<AlertDetailPayload?>(null) }
     var error by remember { mutableStateOf("") }
@@ -56,8 +56,6 @@ fun AlertDetailScreen(serverUrl: String, token: String, alertId: Long, onBack: (
             .onSuccess { detail = it; error = "" }
             .onFailure { error = it.message ?: "loading failed" }
     }
-
-    TextButton(onClick = onBack) { Text("← Alertes") }
 
     if (error.isNotEmpty()) {
         Text(error, color = MaterialTheme.colorScheme.error)

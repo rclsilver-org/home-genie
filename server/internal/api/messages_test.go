@@ -69,3 +69,40 @@ func TestMarkFeedReadIsPersonal(t *testing.T) {
 		t.Fatalf("claire still has her two unread ones, got %+v", hers)
 	}
 }
+
+// The badge counter counts only what the view shows: neither the alerts, nor
+// what other people have not read.
+func TestUnreadFeedCountIgnoresAlertsAndOtherPeople(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	withLocalAccount(t, repository, "claire", testPassword)
+	channel, publishToken := issueChannelAndToken(t, repository, "mediacenter")
+	shareChannel(t, repository, channel.ID, "claire", store.RoleReader)
+	_, alerting := issueChannelAndToken(t, repository, "alerts-critical")
+
+	publish(t, server, "mediacenter", publishToken, "a film", map[string]string{"Title": "Sonarr"})
+	publish(t, server, "mediacenter", publishToken, "another one", map[string]string{"Title": "Sonarr"})
+	webhook(t, server, "alerts-critical", alerting, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("a", "critical")}})
+
+	thomasToken := session(t, server, "thomas", testPassword)
+	count := decode[map[string]int](t, call(t, server, http.MethodGet,
+		"/api/v1/messages/unread", thomasToken, nil))
+	if count["count"] != 2 {
+		t.Fatalf("two unread expected, got %+v", count)
+	}
+
+	call(t, server, http.MethodPost, "/api/v1/messages/read", thomasToken, nil)
+
+	count = decode[map[string]int](t, call(t, server, http.MethodGet,
+		"/api/v1/messages/unread", thomasToken, nil))
+	if count["count"] != 0 {
+		t.Fatalf("the view should be empty: %+v", count)
+	}
+	claireToken := session(t, server, "claire", testPassword)
+	hers := decode[map[string]int](t, call(t, server, http.MethodGet,
+		"/api/v1/messages/unread", claireToken, nil))
+	if hers["count"] != 2 {
+		t.Fatalf("claire keeps her two unread ones: %+v", hers)
+	}
+}

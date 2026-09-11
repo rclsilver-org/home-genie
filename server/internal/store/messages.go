@@ -275,3 +275,21 @@ func (s *Store) MarkFeedRead(userID int64, deviceID *int64) ([]int64, error) {
 	}
 	return ids, nil
 }
+
+// UnreadFeedCount counts what the notifications view would show, without
+// sending it. A badge needs a number, not a list, and the list is capped
+// where the count must not be.
+func (s *Store) UnreadFeedCount(userID int64) (int, error) {
+	var count int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM messages m
+		   JOIN channel_members c ON c.channel_id = m.channel_id AND c.user_id = ?
+		  WHERE m.alert_id IS NULL
+		    AND NOT EXISTS (SELECT 1 FROM message_reads r
+		                     WHERE r.message_id = m.id AND r.user_id = ?)`,
+		userID, userID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting the unread messages: %w", err)
+	}
+	return count, nil
+}

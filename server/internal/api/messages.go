@@ -142,3 +142,16 @@ func (s *Server) handleMarkFeedRead(w http.ResponseWriter, r *http.Request) {
 
 	s.writeJSON(w, http.StatusOK, map[string]any{"marked": len(ids)})
 }
+
+// handleUnreadFeedCount feeds the badge on the notifications tab.
+func (s *Server) handleUnreadFeedCount(w http.ResponseWriter, r *http.Request) {
+	user, _ := UserFrom(r.Context())
+
+	count, err := s.store.UnreadFeedCount(user.ID)
+	if err != nil {
+		s.logger.Error("counting the unread messages", "error", err, "user_id", user.ID)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]int{"count": count})
+}

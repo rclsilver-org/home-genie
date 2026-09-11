@@ -1,6 +1,14 @@
 package io.github.rclsilver.home_notifications.ui
 
-import androidx.compose.foundation.horizontalScroll
+import android.content.Context
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,10 +19,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -42,6 +51,7 @@ import io.github.rclsilver.home_notifications.net.ChannelPayload
 import io.github.rclsilver.home_notifications.net.LoginRequest
 import io.github.rclsilver.home_notifications.net.CreateChannelRequest
 import io.github.rclsilver.home_notifications.net.createChannel
+import io.github.rclsilver.home_notifications.net.fetchUnreadFeedCount
 import io.github.rclsilver.home_notifications.net.listChannels
 import io.github.rclsilver.home_notifications.net.markChannelRead
 import io.github.rclsilver.home_notifications.service.ConnectionService
@@ -57,19 +67,33 @@ import java.util.Locale
  */
 private const val DEFAULT_SERVER_URL = "http://192.0.2.10:8088"
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppScreen(settings: Settings) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val token by settings.token.collectAsState(initial = "")
     val serverUrl by settings.serverUrl.collectAsState(initial = "")
+    val username by settings.username.collectAsState(initial = "")
 
-    // Navigation by plain state: two screens do not justify a library, and
-    // the open channel must survive a recomposition but not the process.
+    // Navigation by plain state: a handful of screens does not justify a
+    // library, and what is open must survive a recomposition but not the
+    // process.
     var openChannel by remember { mutableStateOf<ChannelPayload?>(null) }
-    // The open alert, if any: the console and the detail are the same tab,
-    // not two destinations.
+    // The open alert, if any: the console and the detail are the same
+    // section, not two destinations.
     var openAlert by remember { mutableStateOf<Long?>(null) }
-    var destination by remember { mutableStateOf(Destination.ALERTS) }
+    var destination by remember { mutableStateOf(Destination.OVERVIEW) }
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+
+    // Recounted on every event received: the server is the one that knows,
+    // and keeping a parallel count would end up diverging from its own.
+    var unread by remember { mutableStateOf(0) }
+    val connection by ConnectionService.observedState.collectAsState()
+    LaunchedEffect(serverUrl, token, connection.events, destination) {
+        if (serverUrl.isEmpty() || token.isEmpty()) return@LaunchedEffect
+        fetchUnreadFeedCount(serverUrl, token).onSuccess { unread = it }
+    }
 
     // As soon as a session exists, the service must be running. Without this
     // an application update — which kills the service without START_STICKY
@@ -79,41 +103,109 @@ fun AppScreen(settings: Settings) {
         if (token.isNotEmpty()) ConnectionService.start(context)
     }
 
-    Scaffold { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(20.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            val current = openChannel
-            when {
-                token.isEmpty() -> LoginCard(settings)
-                current != null -> ChannelScreen(
-                    channel = current,
-                    serverUrl = serverUrl,
-                    token = token,
-                    onBack = { openChannel = null },
-                )
-                else -> {
-                    // The alerts are the main function: they open by default,
-                    // the channels and the diagnostics come behind.
-                    Destinations(destination) { destination = it }
-                    when (destination) {
-                        Destination.ALERTS -> {
-                            val opened = openAlert
-                            if (opened == null) {
-                                AlertsScreen(serverUrl, token) { openAlert = it.id }
-                            } else {
-                                AlertDetailScreen(serverUrl, token, opened) { openAlert = null }
+    // No drawer until there is a session: there would be a single screen
+    // behind it, and a menu that leads nowhere.
+    if (token.isEmpty()) {
+        Scaffold { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                LoginCard(settings)
+            }
+        }
+        return
+    }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            DrawerContent(destination, unread, username) { selected ->
+                destination = selected
+                // Going back to the menu closes what was open: otherwise one
+                // would later land back on a channel believed to be left.
+                openChannel = null
+                openAlert = null
+                scope.launch { drawerState.close() }
+            }
+        },
+    ) {
+        Scaffold(
+            topBar = {
+                // The title and the arrow say where one is: the drawer only
+                // opens from a section, and what is open on top of it closes
+                // with back rather than with a button dropped in the page.
+                val openedChannel = openChannel
+                val openedAlert = openAlert
+                val nested = openedChannel != null ||
+                    (destination == Destination.ALERTS && openedAlert != null)
+                TopAppBar(
+                    title = {
+                        Text(
+                            when {
+                                openedChannel != null -> openedChannel.slug
+                                openedAlert != null && destination == Destination.ALERTS ->
+                                    "Alert #$openedAlert"
+                                else -> destination.label
+                            }
+                        )
+                    },
+                    navigationIcon = {
+                        if (nested) {
+                            IconButton(onClick = { openChannel = null; openAlert = null }) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = "Back",
+                                )
+                            }
+                        } else {
+                            IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                Icon(Icons.Default.Menu, contentDescription = "Menu")
                             }
                         }
-                        Destination.NOTIFICATIONS -> NotificationsScreen(serverUrl, token)
-                        Destination.CHANNELS -> ChannelsScreen(settings) { openChannel = it }
-                        Destination.DIAGNOSTIC -> DiagnosticCard(settings)
+                    },
+                )
+            },
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                val current = openChannel
+                when {
+                    current != null -> ChannelScreen(
+                        channel = current,
+                        serverUrl = serverUrl,
+                        token = token,
+                    )
+                    destination == Destination.OVERVIEW -> OverviewScreen(
+                        serverUrl = serverUrl,
+                        token = token,
+                        unread = unread,
+                        onOpen = { destination = it },
+                    )
+                    destination == Destination.ALERTS -> {
+                        val opened = openAlert
+                        if (opened == null) {
+                            AlertsScreen(serverUrl, token) { openAlert = it.id }
+                        } else {
+                            AlertDetailScreen(serverUrl, token, opened)
+                        }
                     }
+                    destination == Destination.NOTIFICATIONS ->
+                        NotificationsScreen(serverUrl, token)
+                    destination == Destination.CHANNELS ->
+                        ChannelsScreen(settings) { openChannel = it }
+                    destination == Destination.SETTINGS -> SettingsScreen(settings)
+                    destination == Destination.DIAGNOSTICS -> DiagnosticCard(settings)
                 }
             }
         }
@@ -394,9 +486,7 @@ private fun NewChannelRow(onCreate: (String) -> Unit) {
  * would be lost in the noise.
  */
 @Composable
-private fun ReliabilityBanner(state: ConnectionService.State) {
-    val context = LocalContext.current
-
+fun ReliabilityBanner(state: ConnectionService.State) {
     // Symptom: the service claims to be running but nothing has arrived for a
     // long while, or socket failures are piling up. That is what brings back
     // the items no API can verify.
@@ -404,11 +494,25 @@ private fun ReliabilityBanner(state: ConnectionService.State) {
         System.currentTimeMillis() - state.lastHeartbeat > 5 * 60 * 1000
     val symptom = stale || state.failures >= 3
 
+    ReliabilityChecks(LocalContext.current, symptom, title = "To do")
+}
+
+/**
+ * The system settings to fix, and nothing else.
+ *
+ * [symptom] also brings up what no API can verify: the vendor's own
+ * "sleeping apps" list, which is only recalled when something is off — or on
+ * the settings screen, where one comes precisely to check.
+ */
+@Composable
+fun ReliabilityChecks(context: Context, symptom: Boolean, title: String = "") {
     val checks = pendingChecks(context, symptom)
     if (checks.isEmpty()) return
 
-    Spacer(Modifier.height(8.dp))
-    Text("To do", style = MaterialTheme.typography.titleMedium)
+    if (title.isNotEmpty()) {
+        Spacer(Modifier.height(8.dp))
+        Text(title, style = MaterialTheme.typography.titleMedium)
+    }
 
     checks.forEach { check ->
         Card(
@@ -426,31 +530,6 @@ private fun ReliabilityBanner(state: ConnectionService.State) {
                     }
                 }
             }
-        }
-    }
-}
-
-/** The three views, in order of importance. */
-enum class Destination(val label: String) {
-    ALERTS("Alerts"),
-    NOTIFICATIONS("Notifications"),
-    CHANNELS("Canaux"),
-    DIAGNOSTIC("Diagnostic"),
-}
-
-@Composable
-private fun Destinations(current: Destination, onSelect: (Destination) -> Unit) {
-    Row(
-        // Four tabs do not always fit: they scroll rather than get truncated.
-        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Destination.entries.forEach { destination ->
-            FilterChip(
-                selected = destination == current,
-                onClick = { onSelect(destination) },
-                label = { Text(destination.label) },
-            )
         }
     }
 }
