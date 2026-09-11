@@ -301,3 +301,209 @@ func TestMalformedWebhookIsRefused(t *testing.T) {
 		t.Errorf("an alert with no fingerprint was opened: %+v", counts)
 	}
 }
+
+// The home screen reads every alert of the caller, across all channels, so
+// that an alert without its origin is unusable when the console mixes
+// several of them.
+func TestAllAlertsSpanChannelsAndCarryTheirSlug(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	_, criticalToken := issueChannelAndToken(t, repository, "alerts-critical")
+	_, warningToken := issueChannelAndToken(t, repository, "alerts-warning")
+
+	webhook(t, server, "alerts-critical", criticalToken, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("fp-critical", "critical")}})
+	webhook(t, server, "alerts-warning", warningToken, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("fp-warning", "warning")}})
+
+	token := session(t, server, "thomas", testPassword)
+	all := decode[[]alertPayload](t, call(t, server, http.MethodGet, "/api/v1/alerts", token, nil))
+	if len(all) != 2 {
+		t.Fatalf("%d alerts, want 2 across all channels", len(all))
+	}
+	slugs := map[string]bool{}
+	for _, alert := range all {
+		if alert.ChannelSlug == "" {
+			t.Fatalf("alert with no channel of origin: %+v", alert)
+		}
+		slugs[alert.ChannelSlug] = true
+	}
+	if !slugs["alerts-critical"] || !slugs["alerts-warning"] {
+		t.Fatalf("channels seen: %v", slugs)
+	}
+}
+
+// And never the alerts of a channel one does not belong to.
+func TestAllAlertsExcludeForeignChannels(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	withLocalAccount(t, repository, "other", testPassword)
+	_, publishToken := issueChannelAndToken(t, repository, "prive")
+
+	webhook(t, server, "prive", publishToken, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("fp", "critical")}})
+
+	stranger := session(t, server, "other", testPassword)
+	all := decode[[]alertPayload](t, call(t, server, http.MethodGet, "/api/v1/alerts", stranger, nil))
+	if len(all) != 0 {
+		t.Fatalf("a non-member sees %d alerts", len(all))
+	}
+}
+
+func TestAllAlertsCanBeRestrictedToOpenOnes(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	_, publishToken := issueChannelAndToken(t, repository, "alerts-critical")
+
+	webhook(t, server, "alerts-critical", publishToken, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("ouverte", "critical")}})
+
+	closed := firing("fermee", "critical")
+	webhook(t, server, "alerts-critical", publishToken, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{closed}})
+	closed.Status = store.AlertResolved
+	closed.EndsAt = "2026-09-10T21:00:00Z"
+	webhook(t, server, "alerts-critical", publishToken, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{closed}})
+
+	token := session(t, server, "thomas", testPassword)
+	all := decode[[]alertPayload](t, call(t, server, http.MethodGet, "/api/v1/alerts", token, nil))
+	open := decode[[]alertPayload](t, call(t, server, http.MethodGet, "/api/v1/alerts?open=1", token, nil))
+
+	if len(all) != 2 || len(open) != 1 {
+		t.Fatalf("all = %d, open = %d — want 2 and 1", len(all), len(open))
+	}
+	if open[0].Status != store.AlertFiring {
+		t.Fatalf("statut = %q", open[0].Status)
+	}
+}
+
+// The occurrence counter is what tells an alert that beats from a stable
+// one: without it, forty deliveries and a single one are
+// indistinguishable.
+func TestOccurrencesCountAlertmanagerDeliveries(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	issueChannelAndToken(t, repository, "alerts-critical")
+	_, publishToken := issueChannelAndToken(t, repository, "alerts-critical-2")
+
+	payload := alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("beating", "critical")},
+	}
+	for i := 0; i < 4; i++ {
+		webhook(t, server, "alerts-critical-2", publishToken, payload)
+	}
+
+	token := session(t, server, "thomas", testPassword)
+	all := decode[[]alertPayload](t, call(t, server, http.MethodGet, "/api/v1/alerts", token, nil))
+	if len(all) != 1 {
+		t.Fatalf("%d alerts for four deliveries, want 1", len(all))
+	}
+	if all[0].Occurrences != 4 {
+		t.Fatalf("occurrences = %d, want 4", all[0].Occurrences)
+	}
+}
+
+// The filter that matters: what is still open AND that nobody has taken.
+func TestUnackedFilterKeepsOnlyWhatNeedsAction(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	_, publishToken := issueChannelAndToken(t, repository, "alerts-critical")
+
+	for _, fingerprint := range []string{"prise", "libre"} {
+		alert := firing(fingerprint, "critical")
+		webhook(t, server, "alerts-critical", publishToken, alertmanagerWebhook{
+			Version: "4", Alerts: []alertmanagerAlert{alert}})
+	}
+
+	token := session(t, server, "thomas", testPassword)
+	all := decode[[]alertPayload](t, call(t, server, http.MethodGet, "/api/v1/alerts", token, nil))
+	if len(all) != 2 {
+		t.Fatalf("%d alerts", len(all))
+	}
+
+	call(t, server, http.MethodPost, fmt.Sprintf("/api/v1/alerts/%d/ack", all[0].ID), token, nil)
+
+	unacked := decode[[]alertPayload](t, call(t, server, http.MethodGet,
+		"/api/v1/alerts?unacked=1", token, nil))
+	if len(unacked) != 1 || unacked[0].ID == all[0].ID {
+		t.Fatalf("unacked = %+v — the acknowledged one should be gone", unacked)
+	}
+}
+
+func TestSeverityFilter(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	_, criticalToken := issueChannelAndToken(t, repository, "alerts-critical")
+	_, warningToken := issueChannelAndToken(t, repository, "alerts-warning")
+
+	webhook(t, server, "alerts-critical", criticalToken, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("c", "critical")}})
+	webhook(t, server, "alerts-warning", warningToken, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("w", "warning")}})
+
+	token := session(t, server, "thomas", testPassword)
+	criticals := decode[[]alertPayload](t, call(t, server, http.MethodGet,
+		"/api/v1/alerts?severity=critical", token, nil))
+	if len(criticals) != 1 || criticals[0].Severity != "critical" {
+		t.Fatalf("criticals = %+v", criticals)
+	}
+}
+
+// The journal is rebuilt from what is already recorded; it must tell the
+// story: the opening, the notification, the reminders, the taking over.
+func TestAlertLogTellsTheStory(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	channel, publishToken := issueChannelAndToken(t, repository, "alerts-critical")
+	token := session(t, server, "thomas", testPassword)
+
+	call(t, server, http.MethodPut,
+		fmt.Sprintf("/api/v1/channels/%d/reminders", channel.ID), token,
+		reminderPolicyPayload{Severity: "critical", IntervalSeconds: 60, Enabled: true})
+
+	webhook(t, server, "alerts-critical", publishToken, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("histoire", "critical")}})
+	// A repeat, silent but counted.
+	webhook(t, server, "alerts-critical", publishToken, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("histoire", "critical")}})
+
+	all := decode[[]alertPayload](t, call(t, server, http.MethodGet, "/api/v1/alerts", token, nil))
+	call(t, server, http.MethodPost, fmt.Sprintf("/api/v1/alerts/%d/ack", all[0].ID), token, nil)
+
+	detail := decode[alertDetailPayload](t, call(t, server, http.MethodGet,
+		fmt.Sprintf("/api/v1/alerts/%d", all[0].ID), token, nil))
+
+	kinds := map[string]bool{}
+	for _, entry := range detail.Log {
+		kinds[entry.Kind] = true
+	}
+	for _, expected := range []string{
+		store.AlertLogOpened, store.AlertLogNotified, store.AlertLogRepeated, store.AlertLogAcked,
+	} {
+		if !kinds[expected] {
+			t.Errorf("the journal does not tell %q: %+v", expected, detail.Log)
+		}
+	}
+	if detail.Alert.Occurrences != 2 {
+		t.Errorf("occurrences = %d, want 2", detail.Alert.Occurrences)
+	}
+}
+
+func TestAlertDetailRequiresMembership(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	withLocalAccount(t, repository, "other", testPassword)
+	_, publishToken := issueChannelAndToken(t, repository, "prive")
+	webhook(t, server, "prive", publishToken, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("fp", "critical")}})
+
+	owner := session(t, server, "thomas", testPassword)
+	all := decode[[]alertPayload](t, call(t, server, http.MethodGet, "/api/v1/alerts", owner, nil))
+
+	stranger := session(t, server, "other", testPassword)
+	if r := call(t, server, http.MethodGet,
+		fmt.Sprintf("/api/v1/alerts/%d", all[0].ID), stranger, nil); r.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", r.Code)
+	}
+}

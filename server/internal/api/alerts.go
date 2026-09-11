@@ -54,6 +54,9 @@ type alertPayload struct {
 	ResolvedAt   *time.Time        `json:"resolved_at,omitempty"`
 	AckedBy      string            `json:"acked_by,omitempty"`
 	AckedAt      *time.Time        `json:"acked_at,omitempty"`
+	// Occurrences tells an alert that beats from an alert that is stable.
+	Occurrences   int `json:"occurrences"`
+	ReminderCount int `json:"reminder_count"`
 }
 
 // handleIngestAlertmanager consumes the Alertmanager webhook.
@@ -338,6 +341,7 @@ func toAlertPayload(alert store.Alert, slug string) alertPayload {
 		Labels: alert.Labels, Annotations: alert.Annotations,
 		GeneratorURL: alert.GeneratorURL, StartedAt: alert.StartedAt,
 		ResolvedAt: alert.ResolvedAt, AckedBy: alert.AckedByName, AckedAt: alert.AckedAt,
+		Occurrences: alert.Occurrences, ReminderCount: alert.ReminderCount,
 	}
 }
 
@@ -384,4 +388,123 @@ func (s *Server) scheduleFirstReminder(alert store.Alert) {
 	if err := s.store.SetNextReminder(alert.ID, &next, 0); err != nil {
 		s.logger.Error("scheduling the first reminder", "error", err, "alert_id", alert.ID)
 	}
+}
+
+// handleListAllAlerts returns the caller's alerts across every channel they
+// belong to. This is what the application's home screen reads.
+func (s *Server) handleListAllAlerts(w http.ResponseWriter, r *http.Request) {
+	user, _ := UserFrom(r.Context())
+
+	params := r.URL.Query()
+	query := store.AlertQuery{
+		OnlyOpen:    params.Get("open") == "1",
+		OnlyUnacked: params.Get("unacked") == "1",
+		Severity:    params.Get("severity"),
+	}
+	if raw := params.Get("limit"); raw != "" {
+		if value, err := strconv.Atoi(raw); err == nil {
+			query.Limit = value
+		}
+	}
+
+	alerts, err := s.store.AlertsForUser(user.ID, query)
+	if err != nil {
+		s.logger.Error("listing the alerts", "error", err, "user_id", user.ID)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// The channel slug travels with each alert: the console shows alerts from
+	// several channels at once, and an alert without its origin is unusable.
+	slugs := map[int64]string{}
+	payload := []alertPayload{}
+	for _, alert := range alerts {
+		slug, known := slugs[alert.ChannelID]
+		if !known {
+			if channel, err := s.store.ChannelByID(alert.ChannelID); err == nil {
+				slug = channel.Slug
+			}
+			slugs[alert.ChannelID] = slug
+		}
+		payload = append(payload, toAlertPayload(alert, slug))
+	}
+	s.writeJSON(w, http.StatusOK, payload)
+}
+
+type alertDetailPayload struct {
+	Alert alertPayload    `json:"alert"`
+	Log   []alertLogEntry `json:"log"`
+}
+
+type alertLogEntry struct {
+	At     time.Time `json:"at"`
+	Kind   string    `json:"kind"`
+	Detail string    `json:"detail"`
+}
+
+// handleGetAlert returns one alert with its history.
+//
+// The history is derived from what is already recorded — the messages the
+// alert produced and its own lifecycle fields — rather than kept as a second
+// journal. Two records of the same events would eventually disagree.
+func (s *Server) handleGetAlert(w http.ResponseWriter, r *http.Request) {
+	alert, channel, ok := s.alertForMember(w, r)
+	if !ok {
+		return
+	}
+
+	entries, err := s.store.LogOf(alert)
+	if err != nil {
+		s.logger.Error("building the alert log", "error", err, "alert_id", alert.ID)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	log := []alertLogEntry{}
+	for _, entry := range entries {
+		log = append(log, alertLogEntry{At: entry.At, Kind: entry.Kind, Detail: entry.Detail})
+	}
+
+	s.writeJSON(w, http.StatusOK, alertDetailPayload{
+		Alert: toAlertPayload(alert, channel.Slug),
+		Log:   log,
+	})
+}
+
+// alertForMember resolves the alert in the path and checks membership. A
+// non-member gets 404, as everywhere: the alert's existence is not theirs to
+// learn.
+func (s *Server) alertForMember(w http.ResponseWriter, r *http.Request) (store.Alert, store.Channel, bool) {
+	user, _ := UserFrom(r.Context())
+
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "unknown alert")
+		return store.Alert{}, store.Channel{}, false
+	}
+
+	alert, err := s.store.AlertByID(id)
+	if errors.Is(err, store.ErrNotFound) {
+		s.writeError(w, http.StatusNotFound, "unknown alert")
+		return store.Alert{}, store.Channel{}, false
+	}
+	if err != nil {
+		s.logger.Error("reading the alert", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return store.Alert{}, store.Channel{}, false
+	}
+
+	if _, err := s.store.RoleOn(alert.ChannelID, user.ID); err != nil {
+		s.writeError(w, http.StatusNotFound, "unknown alert")
+		return store.Alert{}, store.Channel{}, false
+	}
+
+	channel, err := s.store.ChannelByID(alert.ChannelID)
+	if err != nil {
+		s.logger.Error("reading the channel", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return store.Alert{}, store.Channel{}, false
+	}
+
+	return alert, channel, true
 }

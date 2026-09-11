@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -34,6 +36,10 @@ type Alert struct {
 	AckedAt        *time.Time
 	ReminderCount  int
 	NextReminderAt *time.Time
+	// Occurrences counts the deliveries Alertmanager made for this alert:
+	// one that beats forty times does not call for the same reaction as one
+	// that fired once.
+	Occurrences int
 }
 
 // IsOpen reports whether the alert is still firing.
@@ -134,8 +140,11 @@ func (s *Store) RefreshAlert(id int64, input NewAlert) error {
 	labels, _ := json.Marshal(orEmpty(input.Labels))
 	annotations, _ := json.Marshal(orEmpty(input.Annotations))
 
+	// occurrences + 1: this is what turns a silent refresh into a piece of
+	// information rather than a plain non-event.
 	if _, err := s.db.Exec(
-		`UPDATE alerts SET severity = ?, labels = ?, annotations = ?, generator_url = ?
+		`UPDATE alerts SET severity = ?, labels = ?, annotations = ?, generator_url = ?,
+		                  occurrences = occurrences + 1
 		  WHERE id = ?`,
 		input.Severity, string(labels), string(annotations), input.GeneratorURL, id); err != nil {
 		return fmt.Errorf("refreshing the alert: %w", err)
@@ -198,6 +207,11 @@ type AlertQuery struct {
 	ChannelID int64
 	// OnlyOpen restricts to firing alerts, which is the console view.
 	OnlyOpen bool
+	// OnlyUnacked is the set that actually demands an action: still firing
+	// and nobody has taken it.
+	OnlyUnacked bool
+	// Severity filters on the Alertmanager label, empty meaning any.
+	Severity string
 	Limit    int
 }
 
@@ -236,7 +250,7 @@ const alertColumns = `
 	SELECT a.id, a.channel_id, a.fingerprint, a.status, a.severity, a.labels,
 	       a.annotations, a.generator_url, a.started_at, a.resolved_at,
 	       a.acked_by, IFNULL(u.username, ''), a.acked_at,
-	       a.reminder_count, a.next_reminder_at
+	       a.reminder_count, a.next_reminder_at, a.occurrences
 	  FROM alerts a
 	  LEFT JOIN users u ON u.id = a.acked_by`
 
@@ -263,7 +277,7 @@ func scanAlertRow(row rowScanner) (Alert, error) {
 	err := row.Scan(&alert.ID, &alert.ChannelID, &alert.Fingerprint, &alert.Status,
 		&alert.Severity, &labels, &annotations, &alert.GeneratorURL, &started,
 		&resolved, &ackedBy, &alert.AckedByName, &ackedAt,
-		&alert.ReminderCount, &nextAt)
+		&alert.ReminderCount, &nextAt, &alert.Occurrences)
 	if err != nil {
 		return Alert{}, err
 	}
@@ -289,4 +303,144 @@ func orEmpty(values map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	return values
+}
+
+// AlertsForUser lists the alerts across every channel the user belongs to,
+// most recent first.
+//
+// A single query rather than one per channel: the alert console is the
+// application's home screen, so it is fetched on every launch and on every
+// event, and fanning out would make its cost grow with the number of
+// channels for no reason.
+func (s *Store) AlertsForUser(userID int64, query AlertQuery) ([]Alert, error) {
+	if query.Limit <= 0 || query.Limit > 200 {
+		query.Limit = 100
+	}
+
+	sqlText := alertColumns + `
+	     JOIN channel_members m ON m.channel_id = a.channel_id AND m.user_id = ?`
+	args := []any{userID}
+
+	conditions := []string{}
+	if query.OnlyOpen || query.OnlyUnacked {
+		conditions = append(conditions, "a.status = ?")
+		args = append(args, AlertFiring)
+	}
+	if query.OnlyUnacked {
+		conditions = append(conditions, "a.acked_at IS NULL")
+	}
+	if query.Severity != "" {
+		conditions = append(conditions, "a.severity = ?")
+		args = append(args, query.Severity)
+	}
+	if len(conditions) > 0 {
+		sqlText += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	sqlText += ` ORDER BY a.started_at DESC, a.id DESC LIMIT ?`
+	args = append(args, query.Limit)
+
+	rows, err := s.db.Query(sqlText, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing the alerts: %w", err)
+	}
+	defer rows.Close()
+
+	alerts := []Alert{}
+	for rows.Next() {
+		alert, err := scanAlertRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		alerts = append(alerts, alert)
+	}
+	return alerts, rows.Err()
+}
+
+// AlertLogEntry is one line of an alert's history.
+type AlertLogEntry struct {
+	At   time.Time
+	Kind string
+	// Detail carries what the line is about — a message title, who
+	// acknowledged, how many deliveries.
+	Detail string
+}
+
+// Alert log kinds, part of the client contract.
+const (
+	AlertLogOpened   = "opened"
+	AlertLogNotified = "notified"
+	AlertLogReminded = "reminded"
+	AlertLogRepeated = "repeated"
+	AlertLogAcked    = "acked"
+	AlertLogResolved = "resolved"
+)
+
+// LogOf builds an alert's history from what is already recorded, rather than
+// keeping a second journal in parallel: the messages it produced, and its own
+// lifecycle fields. Two sources of truth for the same events would be one too
+// many, and they would drift.
+func (s *Store) LogOf(alert Alert) ([]AlertLogEntry, error) {
+	entries := []AlertLogEntry{{
+		At:     alert.StartedAt,
+		Kind:   AlertLogOpened,
+		Detail: fmt.Sprintf("severity %s", orUnknown(alert.Severity)),
+	}}
+
+	rows, err := s.db.Query(
+		`SELECT title, created_at FROM messages WHERE alert_id = ? ORDER BY id`, alert.ID)
+	if err != nil {
+		return nil, fmt.Errorf("reading the alert's messages: %w", err)
+	}
+	defer rows.Close()
+
+	first := true
+	for rows.Next() {
+		var title, created string
+		if err := rows.Scan(&title, &created); err != nil {
+			return nil, fmt.Errorf("reading a message: %w", err)
+		}
+		at, _ := parseTime(created)
+		kind := AlertLogReminded
+		if first {
+			kind = AlertLogNotified
+			first = false
+		}
+		entries = append(entries, AlertLogEntry{At: at, Kind: kind, Detail: title})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Alertmanager repeats are not messages — that is the whole point of the
+	// silent refresh — so they only appear as a count.
+	if alert.Occurrences > 1 {
+		entries = append(entries, AlertLogEntry{
+			At:     alert.StartedAt,
+			Kind:   AlertLogRepeated,
+			Detail: fmt.Sprintf("%d deliveries from Alertmanager", alert.Occurrences),
+		})
+	}
+
+	if alert.AckedAt != nil {
+		entries = append(entries, AlertLogEntry{
+			At: *alert.AckedAt, Kind: AlertLogAcked,
+			Detail: "by " + orUnknown(alert.AckedByName),
+		})
+	}
+	if alert.ResolvedAt != nil {
+		entries = append(entries, AlertLogEntry{
+			At: *alert.ResolvedAt, Kind: AlertLogResolved, Detail: "by Alertmanager",
+		})
+	}
+
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].At.Before(entries[j].At) })
+	return entries, nil
+}
+
+func orUnknown(value string) string {
+	if value == "" {
+		return "unknown"
+	}
+	return value
 }
