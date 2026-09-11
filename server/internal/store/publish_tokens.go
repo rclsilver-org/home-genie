@@ -55,19 +55,18 @@ func (s *Store) PublishTokenByHash(tokenHash string) (PublishToken, Channel, err
 		channel  Channel
 		lastUsed sql.NullString
 		created  string
-		muted    sql.NullString
 		chCreate string
 	)
 
 	err := s.db.QueryRow(
 		`SELECT t.id, t.channel_id, t.name, t.last_used_at, t.created_at,
-		        c.id, c.slug, c.name, c.description, c.muted_until, c.created_at
+		        c.id, c.slug, c.name, c.description, c.created_at
 		   FROM publish_tokens t
 		   JOIN channels c ON c.id = t.channel_id
 		  WHERE t.token_hash = ? AND t.revoked_at IS NULL`, tokenHash).
 		Scan(&token.ID, &token.ChannelID, &token.Name, &lastUsed, &created,
 			&channel.ID, &channel.Slug, &channel.Name, &channel.Description,
-			&muted, &chCreate)
+			&chCreate)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PublishToken{}, Channel{}, ErrNotFound
 	}
@@ -77,7 +76,6 @@ func (s *Store) PublishTokenByHash(tokenHash string) (PublishToken, Channel, err
 
 	token.LastUsedAt = optionalTime(lastUsed)
 	token.CreatedAt, _ = parseTime(created)
-	channel.MutedUntil = optionalTime(muted)
 	channel.CreatedAt, _ = parseTime(chCreate)
 
 	return token, channel, nil

@@ -199,10 +199,14 @@ type messagePayload struct {
 	ClickURL    string          `json:"click_url,omitempty"`
 	Actions     json.RawMessage `json:"actions,omitempty"`
 	CreatedAt   time.Time       `json:"created_at"`
-	// The reminder rank, only on what the devices receive: the stored message
-	// does not carry it, and reading it back later would give today's counter,
-	// not the one of the day it went out.
+	// Rank of the reminder, only on what the devices receive: the stored
+	// message does not carry it, and reading it back later would give
+	// today's count, not the one it was sent with.
 	ReminderCount int `json:"reminder_count,omitempty"`
+	// Silent asks the device not to notify at all — the mute, as opposed to
+	// the quiet hours, which merely lower the priority. The message still
+	// arrives and still counts as unread.
+	Silent bool `json:"silent,omitempty"`
 	// Per caller, like the unread counter.
 	Read bool `json:"read"`
 }
@@ -230,8 +234,7 @@ func (s *Server) publishMessage(channel store.Channel, message store.Message) {
 	s.publishMessagePayload(channel, message, payload)
 }
 
-// deliveryPriority applies the channel's quiet hours to what the phone
-// receives.
+// deliveryPriority applies the quiet hours to what the phone receives.
 //
 // The priority is lowered on the way out and not in the record: the quiet
 // hours change how a message arrives, not what it is, and reading it back
@@ -243,8 +246,8 @@ func (s *Server) publishMessage(channel store.Channel, message store.Message) {
 // phone staying quiet; everything still arrives.
 //
 // A critical is silenced only by a window that names it: the store refuses to
-// let a channel-wide window cover one. Silencing a critical is a legitimate
-// thing to want on a homelab, but not something to inherit by accident.
+// let a broad window cover one. Silencing a critical is a legitimate thing to
+// want on a homelab, but not something to inherit by accident.
 func (s *Server) deliveryPriority(
 	channel store.Channel, message store.Message, severity string, priority int,
 ) int {
@@ -278,5 +281,22 @@ func (s *Server) publishMessagePayload(
 		}
 	}
 
-	s.publishToUsers(members, eventMessageNew, payload)
+	// A mute belongs to each person: the same message goes out audible for
+	// whoever asked for nothing and silent for whoever muted themselves.
+	// It is the only thing that differs between recipients, and the reason
+	// the payload is computed per user.
+	muted, err := s.store.MutedUsers(members, time.Now())
+	if err != nil {
+		s.logger.Error("reading the mutes", "error", err, "channel_id", channel.ID)
+	}
+	if len(muted) > 0 {
+		s.logger.Info("delivered muted", "channel", channel.Slug,
+			"message_id", message.ID, "recipients", len(muted))
+	}
+
+	s.publishPerUser(members, eventMessageNew, func(userID int64) any {
+		personal := payload
+		personal.Silent = muted[userID]
+		return personal
+	})
 }

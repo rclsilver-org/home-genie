@@ -201,37 +201,6 @@ func TestRemovingTheLastOwnerIsAConflict(t *testing.T) {
 	}
 }
 
-func TestMuteIsSetThenCleared(t *testing.T) {
-	server, repository := newTestServer(t)
-	withLocalAccount(t, repository, "thomas", testPassword)
-	token := session(t, server, "thomas", testPassword)
-
-	created := decode[channelPayload](t, call(t, server, http.MethodPost, "/api/v1/channels",
-		token, createChannelRequest{Slug: "alerts"}))
-	path := fmt.Sprintf("/api/v1/channels/%d", created.ID)
-
-	until := "2026-12-31T23:00:00Z"
-	updated := decode[channelPayload](t, call(t, server, http.MethodPatch, path, token,
-		updateChannelRequest{MutedUntil: &until}))
-	if updated.MutedUntil == nil {
-		t.Fatal("the mute was not applied")
-	}
-
-	empty := ""
-	cleared := decode[channelPayload](t, call(t, server, http.MethodPatch, path, token,
-		updateChannelRequest{MutedUntil: &empty}))
-	if cleared.MutedUntil != nil {
-		t.Fatal("the mute was not cleared")
-	}
-
-	// A malformed instant is a 400, not a silently ignored field.
-	bad := "demain"
-	if r := call(t, server, http.MethodPatch, path, token,
-		updateChannelRequest{MutedUntil: &bad}); r.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", r.Code)
-	}
-}
-
 func TestPublishTokenIsShownOnceThenRevocable(t *testing.T) {
 	server, repository := newTestServer(t)
 	withLocalAccount(t, repository, "thomas", testPassword)

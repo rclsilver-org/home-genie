@@ -21,6 +21,8 @@ data class MessagePayload(
     // it is what tells "third time" from "first time" without eating the
     // title.
     @SerialName("reminder_count") val reminderCount: Int = 0,
+    // The mute: the message arrives, the device does not notify.
+    val silent: Boolean = false,
     val read: Boolean = false,
 )
 
@@ -39,16 +41,7 @@ data class ChannelPayload(
     val description: String = "",
     val role: String = "",
     val unread: Int = 0,
-    // Null when the channel is not muted — the absence of a date is the
-    // information, and a past date would mean the same thing.
-    @SerialName("muted_until") val mutedUntil: String? = null,
-) {
-    val isMuted: Boolean
-        get() = mutedUntil?.let {
-            runCatching { java.time.Instant.parse(it).isAfter(java.time.Instant.now()) }
-                .getOrDefault(false)
-        } ?: false
-}
+)
 
 /** An Alertmanager alert, as the server exposes it. */
 @Serializable
@@ -175,11 +168,22 @@ data class QuietHoursPayload(
     val severity: String = "",
     val from: String = "",
     val to: String = "",
-)
+    // "default" for the global window, "channel" for an override: without
+    // it one would think of editing a value that does not apply.
+    val scope: String = "",
+) {
+    val isOverride: Boolean get() = scope == "channel"
+}
 
 /** An account offered by the completion. */
 @Serializable
 data class UserSuggestionPayload(
     val username: String = "",
     @SerialName("display_name") val displayName: String = "",
+)
+
+/** The state of the caller's own mute. */
+@Serializable
+data class MutePayload(
+    @SerialName("muted_until") val mutedUntil: String? = null,
 )

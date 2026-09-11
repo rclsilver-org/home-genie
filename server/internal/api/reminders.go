@@ -94,45 +94,79 @@ func (s *Server) handleSetReminderPolicy(w http.ResponseWriter, r *http.Request)
 }
 
 type quietHoursPayload struct {
-	// Severity empty means the whole channel — which is the only form that
+	// Severity empty means the whole scope — which is the only form that
 	// makes sense on a channel carrying notifications rather than alerts.
 	Severity string `json:"severity"`
 	From     string `json:"from"`
 	To       string `json:"to"`
+	// Scope says where the row lives, so the application can show whether a
+	// channel overrides the default or merely inherits it.
+	Scope string `json:"scope"`
 }
 
-// handleListQuietHours returns a channel's quiet windows.
+func toQuietHoursPayload(window store.QuietHours) quietHoursPayload {
+	scope := scopeChannel
+	if window.IsDefault() {
+		scope = scopeDefault
+	}
+	return quietHoursPayload{
+		Severity: window.Severity, From: window.From, To: window.To, Scope: scope,
+	}
+}
+
+// handleListQuietHours returns a channel's windows and the defaults it
+// inherits.
 func (s *Server) handleListQuietHours(w http.ResponseWriter, r *http.Request) {
 	channel, _, ok := s.channelForMember(w, r)
 	if !ok {
 		return
 	}
+	s.writeQuietHours(w, &channel.ID)
+}
 
-	windows, err := s.store.QuietHoursOf(channel.ID)
+// handleListDefaultQuietHours returns the global windows alone.
+func (s *Server) handleListDefaultQuietHours(w http.ResponseWriter, r *http.Request) {
+	s.writeQuietHours(w, nil)
+}
+
+func (s *Server) writeQuietHours(w http.ResponseWriter, channelID *int64) {
+	windows, err := s.store.QuietHoursOf(channelID)
 	if err != nil {
-		s.logger.Error("listing the quiet hours", "error", err, "channel_id", channel.ID)
+		s.logger.Error("listing the quiet hours", "error", err)
 		s.writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
 	payload := []quietHoursPayload{}
 	for _, window := range windows {
-		payload = append(payload, quietHoursPayload{
-			Severity: window.Severity, From: window.From, To: window.To,
-		})
+		payload = append(payload, toQuietHoursPayload(window))
 	}
 	s.writeJSON(w, http.StatusOK, payload)
 }
 
-// handleSetQuietHours records a window, or removes it when both bounds are
-// empty — "no quiet hours" is what an emptied form means, and asking for a
-// second verb to express it would only be a second thing to get wrong.
+// handleSetQuietHours records a channel's window.
 func (s *Server) handleSetQuietHours(w http.ResponseWriter, r *http.Request) {
 	channel, _, ok := s.channelForAdmin(w, r)
 	if !ok {
 		return
 	}
+	s.setQuietHours(w, r, &channel.ID, channel.Slug)
+}
 
+// handleSetDefaultQuietHours records the global window.
+//
+// Any member may set it, like the mute: it says when the house sleeps, and
+// asking for a right to say that would mean someone cannot.
+func (s *Server) handleSetDefaultQuietHours(w http.ResponseWriter, r *http.Request) {
+	s.setQuietHours(w, r, nil, "(default)")
+}
+
+// setQuietHours records a window, or removes it when both bounds are empty —
+// "no quiet hours" is what an emptied form means, and asking for a second
+// verb to express it would only be a second thing to get wrong.
+func (s *Server) setQuietHours(
+	w http.ResponseWriter, r *http.Request, channelID *int64, scope string,
+) {
 	var request quietHoursPayload
 	if err := decodeJSON(r, &request); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
@@ -140,13 +174,12 @@ func (s *Server) handleSetQuietHours(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if request.From == "" && request.To == "" {
-		if err := s.store.DeleteQuietHours(channel.ID, request.Severity); err != nil {
+		if err := s.store.DeleteQuietHours(channelID, request.Severity); err != nil {
 			s.logger.Error("deleting the quiet hours", "error", err)
 			s.writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		s.logger.Info("quiet hours cleared", "channel", channel.Slug,
-			"severity", request.Severity)
+		s.logger.Info("quiet hours cleared", "scope", scope, "severity", request.Severity)
 		s.writeJSON(w, http.StatusOK, request)
 		return
 	}
@@ -154,7 +187,7 @@ func (s *Server) handleSetQuietHours(w http.ResponseWriter, r *http.Request) {
 	// Half a window would silence at an unpredictable hour; better to refuse
 	// than to guess the missing bound.
 	window := store.QuietHours{
-		ChannelID: channel.ID, Severity: request.Severity,
+		ChannelID: channelID, Severity: request.Severity,
 		From: request.From, To: request.To,
 	}
 	if err := s.store.SetQuietHours(window); err != nil {
@@ -162,7 +195,7 @@ func (s *Server) handleSetQuietHours(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.logger.Info("quiet hours set", "channel", channel.Slug,
+	s.logger.Info("quiet hours set", "scope", scope,
 		"severity", request.Severity, "from", request.From, "to", request.To)
-	s.writeJSON(w, http.StatusOK, request)
+	s.writeJSON(w, http.StatusOK, toQuietHoursPayload(window))
 }

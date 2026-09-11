@@ -16,9 +16,6 @@ import android.content.Intent
 class MuteReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        val channelId = intent.getLongExtra(EXTRA_CHANNEL_ID, 0)
-        if (channelId == 0L) return
-
         val tag = intent.getStringExtra(EXTRA_TAG)
         val notificationId = intent.getIntExtra(EXTRA_NOTIFICATION_ID, 0)
         if (notificationId != 0) {
@@ -29,11 +26,10 @@ class MuteReceiver : BroadcastReceiver() {
 
         // Same reasoning as for the acknowledgement: the gesture must survive
         // having no network, or the series keeps ringing.
-        MuteWorker.enqueue(context.applicationContext, channelId)
+        MuteWorker.enqueue(context.applicationContext)
     }
 
     companion object {
-        const val EXTRA_CHANNEL_ID = "channel_id"
         const val EXTRA_TAG = "tag"
         const val EXTRA_NOTIFICATION_ID = "notification_id"
     }

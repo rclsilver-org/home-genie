@@ -63,13 +63,7 @@ type Channel struct {
 	Slug        string
 	Name        string
 	Description string
-	MutedUntil  *time.Time
 	CreatedAt   time.Time
-}
-
-// IsMuted reports whether the channel is silenced at the given instant.
-func (c Channel) IsMuted(at time.Time) bool {
-	return c.MutedUntil != nil && at.Before(*c.MutedUntil)
 }
 
 // Membership pairs a channel with the caller's standing on it.
@@ -137,21 +131,21 @@ func (s *Store) CreateChannel(slug, name, description string, ownerID int64) (Ch
 // which authenticate with a token rather than a membership.
 func (s *Store) ChannelBySlug(slug string) (Channel, error) {
 	return s.scanChannel(s.db.QueryRow(
-		`SELECT id, slug, name, description, muted_until, created_at
+		`SELECT id, slug, name, description, created_at
 		   FROM channels WHERE slug = ?`, slug))
 }
 
 // ChannelByID resolves a channel by identifier.
 func (s *Store) ChannelByID(id int64) (Channel, error) {
 	return s.scanChannel(s.db.QueryRow(
-		`SELECT id, slug, name, description, muted_until, created_at
+		`SELECT id, slug, name, description, created_at
 		   FROM channels WHERE id = ?`, id))
 }
 
 // MembershipsOf lists the channels a user belongs to, with their role.
 func (s *Store) MembershipsOf(userID int64) ([]Membership, error) {
 	rows, err := s.db.Query(
-		`SELECT c.id, c.slug, c.name, c.description, c.muted_until, c.created_at, m.role
+		`SELECT c.id, c.slug, c.name, c.description, c.created_at, m.role
 		   FROM channels c
 		   JOIN channel_members m ON m.channel_id = c.id
 		  WHERE m.user_id = ?
@@ -165,16 +159,14 @@ func (s *Store) MembershipsOf(userID int64) ([]Membership, error) {
 	for rows.Next() {
 		var (
 			membership Membership
-			muted      sql.NullString
 			created    string
 			role       string
 		)
 		if err := rows.Scan(&membership.Channel.ID, &membership.Channel.Slug,
 			&membership.Channel.Name, &membership.Channel.Description,
-			&muted, &created, &role); err != nil {
+			&created, &role); err != nil {
 			return nil, fmt.Errorf("reading a channel: %w", err)
 		}
-		membership.Channel.MutedUntil = optionalTime(muted)
 		membership.Channel.CreatedAt, _ = parseTime(created)
 		membership.Role = Role(role)
 		memberships = append(memberships, membership)
@@ -291,7 +283,7 @@ func (s *Store) MembersOf(channelID int64) ([]Member, error) {
 
 // UpdateChannel changes the editable fields. A nil pointer leaves the field
 // alone, which is what lets a PATCH clear muted_until explicitly.
-func (s *Store) UpdateChannel(id int64, name, description *string, mutedUntil **time.Time) error {
+func (s *Store) UpdateChannel(id int64, name, description *string) error {
 	sets := []string{}
 	args := []any{}
 
@@ -302,14 +294,6 @@ func (s *Store) UpdateChannel(id int64, name, description *string, mutedUntil **
 	if description != nil {
 		sets = append(sets, "description = ?")
 		args = append(args, *description)
-	}
-	if mutedUntil != nil {
-		sets = append(sets, "muted_until = ?")
-		if *mutedUntil == nil {
-			args = append(args, nil)
-		} else {
-			args = append(args, (*mutedUntil).UTC().Format(time.RFC3339))
-		}
 	}
 	if len(sets) == 0 {
 		return nil
@@ -343,18 +327,16 @@ func (s *Store) DeleteChannel(id int64) error {
 func (s *Store) scanChannel(row *sql.Row) (Channel, error) {
 	var (
 		channel Channel
-		muted   sql.NullString
 		created string
 	)
 	err := row.Scan(&channel.ID, &channel.Slug, &channel.Name, &channel.Description,
-		&muted, &created)
+		&created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Channel{}, ErrNotFound
 	}
 	if err != nil {
 		return Channel{}, fmt.Errorf("reading the channel: %w", err)
 	}
-	channel.MutedUntil = optionalTime(muted)
 	channel.CreatedAt, _ = parseTime(created)
 	return channel, nil
 }

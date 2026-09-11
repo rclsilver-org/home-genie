@@ -17,6 +17,7 @@ const (
 	eventAlertResolved = "alert.resolved"
 	eventAlertAcked    = "alert.acked"
 	eventAlertUnacked  = "alert.unacked"
+	eventMuteChanged   = "mute.changed"
 )
 
 // alertmanagerWebhook is Alertmanager's v4 payload. Only what carries

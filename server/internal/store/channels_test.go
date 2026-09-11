@@ -178,36 +178,38 @@ func TestMembershipsOfListsOnlyOwnChannels(t *testing.T) {
 	}
 }
 
-func TestUpdateChannelSetsAndClearsMute(t *testing.T) {
+func TestAMuteBelongsToWhoeverSetIt(t *testing.T) {
 	s := newTestStore(t)
-	owner, _ := s.CreateLocalUser("thomas", "", "hash", true)
-	channel, _ := s.CreateChannel("alerts", "", "", owner.ID)
+	alice, _ := s.CreateLocalUser("alice", "", "hash", true)
+	bob, _ := s.CreateLocalUser("bob", "", "hash", false)
+
+	if muted, err := s.IsMuted(alice.ID, time.Now()); err != nil || muted {
+		t.Fatalf("nothing should be muted to begin with (%v, %v)", muted, err)
+	}
 
 	until := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
-	muted := &until
-	if err := s.UpdateChannel(channel.ID, nil, nil, &muted); err != nil {
-		t.Fatalf("UpdateChannel: %v", err)
+	if err := s.SetMute(alice.ID, &until); err != nil {
+		t.Fatalf("SetMute: %v", err)
 	}
 
-	refreshed, _ := s.ChannelByID(channel.ID)
-	if refreshed.MutedUntil == nil {
-		t.Fatal("the mute was not recorded")
+	if muted, _ := s.IsMuted(alice.ID, time.Now().UTC()); !muted {
+		t.Fatal("the mute should be in force")
 	}
-	if !refreshed.IsMuted(time.Now().UTC()) {
-		t.Fatal("the channel is not reported as muted")
+	// And it spills on nobody.
+	if muted, _ := s.IsMuted(bob.ID, time.Now().UTC()); muted {
+		t.Fatal("alice's mute silenced bob")
 	}
-	if refreshed.IsMuted(until.Add(time.Minute)) {
-		t.Fatal("the channel is still muted past its deadline")
+	// A deadline gone by is no longer a mute: the row stays, and says when
+	// the silence ended.
+	if muted, _ := s.IsMuted(alice.ID, until.Add(time.Minute)); muted {
+		t.Fatal("the mute outlives its deadline")
 	}
 
-	// A pointer to nil clears the field; a nil pointer would leave it alone.
-	var cleared *time.Time
-	if err := s.UpdateChannel(channel.ID, nil, nil, &cleared); err != nil {
-		t.Fatal(err)
+	if err := s.SetMute(alice.ID, nil); err != nil {
+		t.Fatalf("SetMute(nil): %v", err)
 	}
-	refreshed, _ = s.ChannelByID(channel.ID)
-	if refreshed.MutedUntil != nil {
-		t.Fatal("the mute was not cleared")
+	if until, _ := s.MutedUntil(alice.ID); until != nil {
+		t.Fatalf("the mute should be lifted: %v", until)
 	}
 }
 

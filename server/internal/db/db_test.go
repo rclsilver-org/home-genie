@@ -245,3 +245,65 @@ func insertMessage(t *testing.T, handle *sql.DB, channelID int64) int64 {
 	id, _ := result.LastInsertId()
 	return id
 }
+
+// A migration that erases data looks exactly like a correct one as long as
+// the database is empty. This one fills the old schema, migrates over it,
+// and checks everything is still there.
+//
+// Written after the fact: version 5 rebuilt the channels table, and the
+// implicit DELETE of DROP TABLE fired the ON DELETE CASCADE of everything
+// referencing a channel. Messages, alerts, tokens and cadences vanished.
+func TestMigrationsPreserveData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	handle, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+
+	// The schema as it was before the mute left the channels.
+	if err := MigrateTo(handle, path, 4); err != nil {
+		t.Fatalf("migrating to version 4: %v", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := handle.Exec(query, args...); err != nil {
+			t.Fatalf("%s: %v", query, err)
+		}
+	}
+	exec(`INSERT INTO users (id, username, display_name, created_at)
+	      VALUES (1, 'thomas', '', ?)`, now)
+	exec(`INSERT INTO channels (id, slug, name, created_at) VALUES (1, 'alerts', '', ?)`, now)
+	exec(`INSERT INTO channel_members (channel_id, user_id, role, created_at)
+	      VALUES (1, 1, 'owner', ?)`, now)
+	exec(`INSERT INTO messages (id, channel_id, title, body, priority, tags, created_at)
+	      VALUES (1, 1, 'a movie', '', 3, '[]', ?)`, now)
+	exec(`INSERT INTO alerts (id, channel_id, fingerprint, status, severity, labels,
+	                          annotations, started_at)
+	      VALUES (1, 1, 'abc', 'firing', 'critical', '{}', '{}', ?)`, now)
+	exec(`INSERT INTO publish_tokens (id, channel_id, name, token_hash, created_at)
+	      VALUES (1, 1, 'alertmanager', 'hash', ?)`, now)
+	exec(`INSERT INTO reminder_policies (channel_id, severity, interval_seconds, enabled)
+	      VALUES (1, 'critical', 600, 1)`)
+	exec(`INSERT INTO quiet_hours (channel_id, severity, quiet_from, quiet_to)
+	      VALUES (1, 'critical', '23:00', '07:00')`)
+
+	if err := Migrate(handle, path); err != nil {
+		t.Fatalf("migrating to the latest version: %v", err)
+	}
+
+	for _, table := range []string{
+		"users", "channels", "channel_members", "messages", "alerts",
+		"publish_tokens", "reminder_policies", "quiet_hours",
+	} {
+		var count int
+		if err := handle.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
+			t.Fatalf("counting %s: %v", table, err)
+		}
+		if count != 1 {
+			t.Errorf("%s: %d rows after migration, want 1", table, count)
+		}
+	}
+}

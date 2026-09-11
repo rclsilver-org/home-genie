@@ -173,7 +173,11 @@ class ConnectionService : LifecycleService() {
             EVENT_MESSAGE_NEW -> {
                 frame.payload?.let { raw ->
                     runCatching { json.decodeFromJsonElement(MessagePayload.serializer(), raw) }
-                        .onSuccess { if (!it.read) notifier.show(it) }
+                        // `silent` is the mute: the message arrives, counts as
+                        // unread, and does not notify. That is what tells it
+                        // from the quiet hours, which merely
+                        // lower the priority.
+                        .onSuccess { if (!it.read && !it.silent) notifier.show(it) }
                         .onFailure { Log.w(TAG, "unreadable message", it) }
                 }
             }

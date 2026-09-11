@@ -9,22 +9,23 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import androidx.work.workDataOf
+import io.github.rclsilver.home_genie.data.Settings
+import io.github.rclsilver.home_genie.net.setMute
 import java.time.Instant
 import java.time.temporal.ChronoUnit
-import io.github.rclsilver.home_genie.data.Settings
-import io.github.rclsilver.home_genie.net.muteChannel
 
 private const val TAG = "HomeGenie"
 
-/** Sets the one-hour mute asked for from a notification. */
+/**
+ * Sets my own mute for an hour, asked for from a notification.
+ *
+ * It concerns the person holding the phone alone: the server files it on
+ * their account, not on the channel nor on the installation.
+ */
 class MuteWorker(context: Context, params: WorkerParameters) :
     CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
-        val channelId = inputData.getLong(KEY_CHANNEL_ID, 0)
-        if (channelId == 0L) return Result.failure()
-
         val settings = Settings(applicationContext)
         val url = settings.serverUrlOnce()
         val token = settings.tokenOnce()
@@ -34,14 +35,14 @@ class MuteWorker(context: Context, params: WorkerParameters) :
         // button is pressed: a mute posted after twenty minutes of network
         // trouble would end twenty minutes early.
         val until = Instant.now().plus(1, ChronoUnit.HOURS)
-        return muteChannel(url, token, channelId, until.toString()).fold(
+        return setMute(url, token, until.toString()).fold(
             onSuccess = {
-                Log.i(TAG, "channel $channelId muted until $until")
+                Log.i(TAG, "muted until $until")
                 Result.success()
             },
             onFailure = { error ->
                 if (runAttemptCount >= MAX_ATTEMPTS) {
-                    Log.w(TAG, "muting channel $channelId abandoned", error)
+                    Log.w(TAG, "mute given up", error)
                     Result.failure()
                 } else {
                     Result.retry()
@@ -51,12 +52,10 @@ class MuteWorker(context: Context, params: WorkerParameters) :
     }
 
     companion object {
-        const val KEY_CHANNEL_ID = "channel_id"
         private const val MAX_ATTEMPTS = 5
 
-        fun enqueue(context: Context, channelId: Long) {
+        fun enqueue(context: Context) {
             val request = OneTimeWorkRequestBuilder<MuteWorker>()
-                .setInputData(workDataOf(KEY_CHANNEL_ID to channelId))
                 .setConstraints(
                     Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
                 )
@@ -64,7 +63,7 @@ class MuteWorker(context: Context, params: WorkerParameters) :
             // REPLACE and not KEEP: two successive requests mean "one hour from
             // now", not "ignore the second one".
             WorkManager.getInstance(context)
-                .enqueueUniqueWork("mute-$channelId", ExistingWorkPolicy.REPLACE, request)
+                .enqueueUniqueWork("mute", ExistingWorkPolicy.REPLACE, request)
         }
     }
 }

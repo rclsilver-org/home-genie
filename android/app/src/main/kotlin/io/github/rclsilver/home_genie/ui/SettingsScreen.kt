@@ -1,6 +1,13 @@
 package io.github.rclsilver.home_genie.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import java.time.temporal.ChronoUnit
+import java.time.Instant
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -17,6 +24,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import io.github.rclsilver.home_genie.data.Settings
+import io.github.rclsilver.home_genie.net.fetchMute
+import io.github.rclsilver.home_genie.net.setMute
 import io.github.rclsilver.home_genie.service.ConnectionService
 
 /**
@@ -32,6 +41,7 @@ fun SettingsScreen(settings: Settings) {
     val scope = rememberCoroutineScope()
     val serverUrl by settings.serverUrl.collectAsState(initial = "")
     val username by settings.username.collectAsState(initial = "")
+    val token by settings.token.collectAsState(initial = "")
     val state by ConnectionService.observedState.collectAsState()
 
     Text("Account", style = MaterialTheme.typography.titleMedium)
@@ -49,6 +59,10 @@ fun SettingsScreen(settings: Settings) {
             "the server that issued it.",
         style = MaterialTheme.typography.bodySmall,
     )
+
+    MuteSection(serverUrl, token)
+
+    QuietHoursSection(channelId = null, serverUrl = serverUrl, token = token)
 
     Text("System settings", style = MaterialTheme.typography.titleMedium)
     // Shown here whatever the symptom: this is the screen one comes to in
@@ -71,3 +85,76 @@ fun SettingsScreen(settings: Settings) {
         )
     }
 }
+
+/**
+ * My mute: every channel at once, and me alone.
+ *
+ * While muted, nothing notifies me any more — not even a critical alert. It is
+ * a deliberate, time-bounded gesture: "be quiet, I am the one making the
+ * noise". Being woken by the rack one is working on is the most useless alert
+ * there is.
+ *
+ * It silences nobody else: the other members keep being notified normally, and
+ * do not even see that I went quiet.
+ *
+ * Not to be confused with quiet hours, which only turn the sound down
+ * according to the clock: a mute suppresses the notification outright. The
+ * messages still arrive, and stay unread.
+ */
+@Composable
+private fun MuteSection(serverUrl: String, token: String) {
+    val scope = rememberCoroutineScope()
+    var mutedUntil by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf("") }
+
+    // The state follows the events: a mute set from a notification or from
+    // another device must show up here without reopening the screen.
+    val state by ConnectionService.observedState.collectAsState()
+    LaunchedEffect(serverUrl, token, state.events) {
+        if (serverUrl.isEmpty() || token.isEmpty()) return@LaunchedEffect
+        fetchMute(serverUrl, token).onSuccess { mutedUntil = it.mutedUntil }
+    }
+
+    Text("Mute", style = MaterialTheme.typography.titleMedium)
+    Text(
+        mutedUntil?.let {
+            "Nothing will notify you until ${localTime(it)} — the other " +
+                "members, yes."
+        } ?: "No mute. Everything notifies you normally.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(1L, 4L, 24L).forEach { hours ->
+            TextButton(onClick = {
+                scope.launch {
+                    val until = Instant.now().plus(hours, ChronoUnit.HOURS)
+                        .truncatedTo(ChronoUnit.SECONDS)
+                    setMute(serverUrl, token, until.toString())
+                        .onSuccess { mutedUntil = until.toString(); error = "" }
+                        .onFailure { error = it.message ?: "failed" }
+                }
+            }) { Text("${hours}h") }
+        }
+        // Nothing to lift when nothing is set.
+        if (mutedUntil != null) {
+            TextButton(onClick = {
+                scope.launch {
+                    setMute(serverUrl, token, "")
+                        .onSuccess { mutedUntil = null; error = "" }
+                        .onFailure { error = it.message ?: "failed" }
+                }
+            }) { Text("Unmute") }
+        }
+    }
+    if (error.isNotEmpty()) {
+        Text(error, color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+/** A readable local time, from an RFC3339 instant. */
+private fun localTime(rfc3339: String): String = runCatching {
+    java.time.format.DateTimeFormatter.ofPattern("HH:mm")
+        .withZone(java.time.ZoneId.systemDefault())
+        .format(Instant.parse(rfc3339))
+}.getOrElse { rfc3339 }

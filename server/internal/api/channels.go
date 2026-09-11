@@ -12,14 +12,12 @@ import (
 )
 
 type channelPayload struct {
-	ID          int64      `json:"id"`
-	Slug        string     `json:"slug"`
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	MutedUntil  *time.Time `json:"muted_until"`
-	Role        string     `json:"role,omitempty"`
-	// Specific to the caller: a message read by one member stays unread for
-	// the others.
+	ID          int64  `json:"id"`
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Role        string `json:"role,omitempty"`
+	// Per caller: a message read by one member stays unread for the others.
 	Unread int `json:"unread"`
 }
 
@@ -113,8 +111,6 @@ func (s *Server) handleGetChannel(w http.ResponseWriter, r *http.Request) {
 type updateChannelRequest struct {
 	Name        *string `json:"name"`
 	Description *string `json:"description"`
-	// Present and null clears the mute; absent leaves it alone.
-	MutedUntil *string `json:"muted_until"`
 }
 
 func (s *Server) handleUpdateChannel(w http.ResponseWriter, r *http.Request) {
@@ -129,23 +125,7 @@ func (s *Server) handleUpdateChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var muted **time.Time
-	if request.MutedUntil != nil {
-		if *request.MutedUntil == "" {
-			var cleared *time.Time
-			muted = &cleared
-		} else {
-			parsed, err := time.Parse(time.RFC3339, *request.MutedUntil)
-			if err != nil {
-				s.writeError(w, http.StatusBadRequest, "muted_until must be an RFC3339 instant")
-				return
-			}
-			pointer := &parsed
-			muted = &pointer
-		}
-	}
-
-	if err := s.store.UpdateChannel(channel.ID, request.Name, request.Description, muted); err != nil {
+	if err := s.store.UpdateChannel(channel.ID, request.Name, request.Description); err != nil {
 		s.logger.Error("updating the channel", "error", err)
 		s.writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -470,7 +450,6 @@ func toChannelPayload(channel store.Channel, role store.Role) channelPayload {
 		Slug:        channel.Slug,
 		Name:        channel.Name,
 		Description: channel.Description,
-		MutedUntil:  channel.MutedUntil,
 		Role:        string(role),
 	}
 }

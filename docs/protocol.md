@@ -116,7 +116,7 @@ its administration is.
 | `GET /api/v1/channels` | authenticated — lists only their channels, with their role |
 | `POST /api/v1/channels` | authenticated — becomes `owner` |
 | `GET /api/v1/channels/{id}` | member |
-| `PATCH /api/v1/channels/{id}` | `owner` — `name`, `description`, `muted_until` |
+| `PATCH /api/v1/channels/{id}` | `owner` — `name`, `description` |
 | `DELETE /api/v1/channels/{id}` | `owner` — cascades to members, tokens, alerts, messages |
 | `GET /api/v1/channels/{id}/members` | member |
 | `PUT /api/v1/channels/{id}/members/{username}` | `owner` |
@@ -124,9 +124,6 @@ its administration is.
 | `GET /api/v1/channels/{id}/tokens` | `owner` |
 | `POST /api/v1/channels/{id}/tokens` | `owner` |
 | `DELETE /api/v1/channels/{id}/tokens/{tokenID}` | `owner` |
-
-On a `PATCH`, an absent `muted_until` leaves the mute unchanged, an empty string clears
-it, an RFC3339 instant sets it. An unreadable instant is a `400`, not an ignored field.
 
 Removing the **last** `owner` returns `409`: the channel would become unadministrable.
 
@@ -294,11 +291,35 @@ server was updated at 4.
 A failed send reschedules all the same: making an alert mute over a transient failure
 is the one result an alerting system must never produce.
 
+## Mute *(implemented)*
+
+A mute belongs to **whoever sets it**, and concerns them alone. It crosses every
+channel — one does not fall silent per channel, one falls silent — and it is bounded
+in time.
+
+- `GET /api/v1/mute` — theirs, and only theirs
+- `PUT /api/v1/mute` — `{"muted_until": "<RFC3339>"}` sets it, an empty string lifts it
+
+```json
+{ "muted_until": "2026-09-12T23:00:00Z" }
+```
+
+No right is asked for, and none is needed: one silences oneself. Silencing somebody
+else is not a gesture this application offers, so there is nothing to protect here.
+
+While muted, the messages destined for that person carry `"silent": true`: they
+arrive, they count as unread, and they **produce no notification** — not even a
+critical alert. That is what separates a mute from quiet hours, which merely lower the
+priority. The same alert therefore leaves audible for one member and mute for another:
+the payload is computed per recipient.
+
 ## Quiet hours *(implemented)*
 
 A window belongs to the **channel**, optionally named by severity. The most specific
-wins, as with the cadences.
+wins, as with the cadences. A window with no channel is the **global default**.
 
+- `GET /api/v1/quiet-hours` — the global default
+- `PUT /api/v1/quiet-hours` — the global default
 - `GET /api/v1/channels/{id}/quiet-hours` — member
 - `PUT /api/v1/channels/{id}/quiet-hours` — `owner`; two empty bounds remove the
   window, which is what an emptied form means

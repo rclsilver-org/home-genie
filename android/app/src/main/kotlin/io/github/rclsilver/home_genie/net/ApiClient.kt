@@ -298,23 +298,38 @@ suspend fun setReminderPolicy(
     }
 }
 
-/** Mutes a channel until an instant, or lifts the mute. */
-suspend fun muteChannel(serverUrl: String, token: String, channelId: Long, untilRfc3339: String):
-    Result<Unit> = withContext(Dispatchers.IO) {
-    runCatching {
-        val body = """{"muted_until":"$untilRfc3339"}"""
-        val call = ApiClient.defaultClient().newCall(
-            Request.Builder()
-                .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId")
-                .patch(body.toRequestBodyJson())
-                .header("Authorization", "Bearer $token")
-                .build()
-        )
-        call.execute().use { response ->
-            if (!response.isSuccessful) throw IOException("HTTP error ${response.code}")
+/** The state of the caller's own mute. */
+suspend fun fetchMute(serverUrl: String, token: String): Result<MutePayload> =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            get(serverUrl, token, "/api/v1/mute") { text ->
+                Json { ignoreUnknownKeys = true }
+                    .decodeFromString(MutePayload.serializer(), text)
+            }
         }
     }
-}
+
+/**
+ * Mutes everything until an instant, or lifts the mute with an empty
+ * string. Personal and above everything: while muted, even a critical
+ * alert arrives without a notification.
+ */
+suspend fun setMute(serverUrl: String, token: String, untilRfc3339: String): Result<Unit> =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val body = """{"muted_until":"$untilRfc3339"}"""
+            val call = ApiClient.defaultClient().newCall(
+                Request.Builder()
+                    .url("${serverUrl.trimEnd('/')}/api/v1/mute")
+                    .put(body.toRequestBodyJson())
+                    .header("Authorization", "Bearer $token")
+                    .build()
+            )
+            call.execute().use { response ->
+                if (!response.isSuccessful) throw IOException("HTTP error ${response.code}")
+            }
+        }
+    }
 
 /** Creates a channel; the caller becomes its owner. */
 suspend fun createChannel(serverUrl: String, token: String, request: CreateChannelRequest):
@@ -525,11 +540,15 @@ suspend fun removeMember(serverUrl: String, token: String, channelId: Long, user
     }
 }
 
-/** A channel's quiet-hours windows. */
-suspend fun fetchQuietHours(serverUrl: String, token: String, channelId: Long):
+/**
+ * The quiet-hours windows: the channel's own and the global defaults it
+ * inherits, or only the defaults when no channel is given.
+ */
+suspend fun fetchQuietHours(serverUrl: String, token: String, channelId: Long? = null):
     Result<List<QuietHoursPayload>> = withContext(Dispatchers.IO) {
     runCatching {
-        get(serverUrl, token, "/api/v1/channels/$channelId/quiet-hours") { text ->
+        val path = channelId?.let { "/api/v1/channels/$it/quiet-hours" } ?: "/api/v1/quiet-hours"
+        get(serverUrl, token, path) { text ->
             Json { ignoreUnknownKeys = true }
                 .decodeFromString(ListSerializer(QuietHoursPayload.serializer()), text)
         }
@@ -540,14 +559,18 @@ suspend fun fetchQuietHours(serverUrl: String, token: String, channelId: Long):
  * Sets a window, or removes it when both bounds are empty — which is what
  * an emptied form means, and the server reads it that way.
  */
-suspend fun setQuietHours(serverUrl: String, token: String, channelId: Long,
+suspend fun setQuietHours(serverUrl: String, token: String, channelId: Long?,
                           window: QuietHoursPayload): Result<Unit> =
     withContext(Dispatchers.IO) {
         runCatching {
             val payload = Json.encodeToString(QuietHoursPayload.serializer(), window)
             val call = ApiClient.defaultClient().newCall(
                 Request.Builder()
-                    .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId/quiet-hours")
+                    .url(
+                        serverUrl.trimEnd('/') + (channelId?.let {
+                            "/api/v1/channels/$it/quiet-hours"
+                        } ?: "/api/v1/quiet-hours")
+                    )
                     .put(payload.toRequestBodyJson())
                     .header("Authorization", "Bearer $token")
                     .build()

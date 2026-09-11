@@ -97,14 +97,17 @@ class Notifier(private val context: Context) {
         }
 
         // "Mute 1 h": the answer to a series — a season downloading, a rule
-        // beating through a known operation. Absent from the alerts, where
-        // muting the channel would amount to turning off what one came to
-        // watch; there, acknowledging is the right gesture.
+        // beating through a known operation. It silences me alone, for an
+        // hour, everywhere: nobody else is silenced, and the messages keep
+        // arriving.
+        //
+        // Absent from alerts: cutting the sound there would silence what one
+        // came to watch, and the acknowledgement is the right gesture at that
+        // place.
         if (message.alertId == null) {
             val mute = PendingIntent.getBroadcast(
                 context, message.channelId.toInt(),
                 Intent(context, MuteReceiver::class.java)
-                    .putExtra(MuteReceiver.EXTRA_CHANNEL_ID, message.channelId)
                     .putExtra(MuteReceiver.EXTRA_TAG, tag)
                     .putExtra(MuteReceiver.EXTRA_NOTIFICATION_ID, notificationId),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,

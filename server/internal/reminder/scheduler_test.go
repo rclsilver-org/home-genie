@@ -163,7 +163,7 @@ func TestQuietHoursPushTheNextReminderOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := repository.SetQuietHours(store.QuietHours{
-		ChannelID: channel.ID, Severity: "warning",
+		ChannelID: &channel.ID, Severity: "warning",
 		From: "23:00", To: "07:00"}); err != nil {
 		t.Fatal(err)
 	}

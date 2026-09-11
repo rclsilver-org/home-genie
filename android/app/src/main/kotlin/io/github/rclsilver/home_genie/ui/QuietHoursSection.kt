@@ -39,7 +39,7 @@ private val SCOPES = listOf("", "critical", "warning", "info")
  * does lose things.
  */
 @Composable
-fun QuietHoursSection(channelId: Long, serverUrl: String, token: String) {
+fun QuietHoursSection(channelId: Long?, serverUrl: String, token: String) {
     val scope = rememberCoroutineScope()
     var windows by remember { mutableStateOf<List<QuietHoursPayload>>(emptyList()) }
     var error by remember { mutableStateOf("") }
@@ -58,8 +58,13 @@ fun QuietHoursSection(channelId: Long, serverUrl: String, token: String) {
 
     Text("Quiet hours", style = MaterialTheme.typography.titleMedium)
     Text(
-        "During the window, messages arrive without noise. Nothing is lost: " +
-            "an unacknowledged alert comes back at the end of the window.",
+        if (channelId == null)
+            "The default, for every channel. During the window messages arrive " +
+                "without noise; nothing is lost, an unacknowledged alert comes " +
+                "back when the window closes."
+        else
+            "What this channel overrides. With no override it follows the " +
+                "default set in the settings.",
         style = MaterialTheme.typography.bodySmall,
     )
     if (error.isNotEmpty()) {
@@ -67,7 +72,10 @@ fun QuietHoursSection(channelId: Long, serverUrl: String, token: String) {
     }
 
     SCOPES.forEach { severity ->
-        QuietHoursCard(severity, windows.firstOrNull { it.severity == severity }) { updated ->
+        // The most specific wins: a channel override hides the default.
+        val own = windows.firstOrNull { it.severity == severity && it.isOverride }
+        val inherited = windows.firstOrNull { it.severity == severity && !it.isOverride }
+        QuietHoursCard(severity, own ?: inherited, inheritedFrom = own == null && inherited != null) { updated ->
             scope.launch {
                 setQuietHours(serverUrl, token, channelId, updated)
                     .onSuccess { error = ""; reloads++ }
@@ -81,6 +89,7 @@ fun QuietHoursSection(channelId: Long, serverUrl: String, token: String) {
 private fun QuietHoursCard(
     severity: String,
     current: QuietHoursPayload?,
+    inheritedFrom: Boolean,
     onSave: (QuietHoursPayload) -> Unit,
 ) {
     var from by remember(current) { mutableStateOf(current?.from ?: "") }
@@ -105,14 +114,20 @@ private fun QuietHoursCard(
                 style = MaterialTheme.typography.titleSmall,
             )
             Text(
-                when {
-                    severity.isEmpty() ->
-                        "Does not cover critical alerts: silencing those is asked for " +
-                            "by naming 'critical'."
-                    critical ->
-                        "Silencing a critical is a deliberate choice — on a homelab, a " +
-                            "disk filling up at night can wait until morning."
-                    else -> "Replaces the channel window for this severity."
+                buildString {
+                    if (inheritedFrom) append("Inherited from the default. ")
+                    append(
+                        when {
+                            severity.isEmpty() ->
+                                "Does not cover critical alerts: silencing those is " +
+                                    "asked for by naming 'critical'."
+                            critical ->
+                                "Silencing a critical is a deliberate choice — on a " +
+                                    "homelab, a disk filling up at night can wait " +
+                                    "for the morning."
+                            else -> "Replaces the broad window for this severity."
+                        }
+                    )
                 },
                 style = MaterialTheme.typography.bodySmall,
             )
@@ -154,7 +169,13 @@ private fun QuietHoursCard(
                     )
                 },
             ) {
-                Text(if (empty) "Retirer" else "Enregistrer")
+                Text(
+                    when {
+                        empty -> "Remove"
+                        inheritedFrom -> "Override for this channel"
+                        else -> "Save"
+                    }
+                )
             }
         }
     }

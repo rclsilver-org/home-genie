@@ -43,6 +43,12 @@ func (s *Server) Routes() *http.ServeMux {
 
 	mux.Handle("GET /api/v1/users", device(s.handleSearchUsers))
 
+	mux.Handle("GET /api/v1/quiet-hours", device(s.handleListDefaultQuietHours))
+	mux.Handle("PUT /api/v1/quiet-hours", device(s.handleSetDefaultQuietHours))
+
+	mux.Handle("GET /api/v1/mute", device(s.handleGetMute))
+	mux.Handle("PUT /api/v1/mute", device(s.handleSetMute))
+
 	mux.Handle("GET /api/v1/channels", device(s.handleListChannels))
 	mux.Handle("POST /api/v1/channels", device(s.handleCreateChannel))
 	mux.Handle("GET /api/v1/channels/{id}", device(s.handleGetChannel))

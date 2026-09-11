@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/rclsilver-org/home-genie/server/internal/store"
 )
@@ -311,5 +312,128 @@ func TestAWindowNamingCriticalSilencesIt(t *testing.T) {
 		"/api/v1/alerts?unacked=1", token, nil))
 	if len(alerts) != 1 {
 		t.Fatalf("the alert must stay to be dealt with: %+v", alerts)
+	}
+}
+
+// The mute is above everything: it silences what quiet hours would let ring,
+// a critical included. Being woken by the rack one is working on is the most
+// useless alert there is — for the person working on it, and for them alone.
+func TestTheMuteSilencesEvenACritical(t *testing.T) {
+	httpServer, server, token := liveServer(t)
+
+	channel := decode[channelPayload](t, call(t, server, http.MethodPost, "/api/v1/channels",
+		token, createChannelRequest{Slug: "alerts", Name: "Alerts"}))
+	publishToken := decode[publishTokenPayload](t, call(t, server, http.MethodPost,
+		fmt.Sprintf("/api/v1/channels/%d/tokens", channel.ID), token,
+		createTokenRequest{Name: "alertmanager"}))
+
+	until := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
+	if r := call(t, server, http.MethodPut, "/api/v1/mute", token,
+		setMuteRequest{MutedUntil: until}); r.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", r.Code, r.Body)
+	}
+
+	conn := dial(t, httpServer.URL, token, 0)
+	readUntil(t, conn, frameReady)
+
+	webhook(t, server, "alerts", publishToken.Token, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("c", "critical")}})
+
+	frame := readUntil(t, conn, eventMessageNew)
+	var payload messagePayload
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.Silent {
+		t.Fatalf("the mute must cover a critical: %+v", payload)
+	}
+	// It silences, it does not lose: the alert is there, open, to be dealt with.
+	alerts := decode[[]alertPayload](t, call(t, server, http.MethodGet,
+		"/api/v1/alerts?unacked=1", token, nil))
+	if len(alerts) != 1 {
+		t.Fatalf("the alert must stay to be dealt with: %+v", alerts)
+	}
+
+	// Lifted, the silence stops at once.
+	if r := call(t, server, http.MethodPut, "/api/v1/mute", token,
+		setMuteRequest{}); r.Code != http.StatusOK {
+		t.Fatalf("lifting: %d", r.Code)
+	}
+	webhook(t, server, "alerts", publishToken.Token, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("d", "critical")}})
+	frame = readUntil(t, conn, eventMessageNew)
+	var after messagePayload
+	if err := json.Unmarshal(frame.Payload, &after); err != nil {
+		t.Fatal(err)
+	}
+	if after.Silent {
+		t.Fatalf("the mute lifted, nothing must be silenced: %+v", after)
+	}
+}
+
+// The global window applies everywhere, the channel one replaces it where it
+// exists: the "most specific wins" rule, set once for the night and argued
+// channel by channel only when a channel deserves it.
+func TestAChannelWindowOverridesTheGlobalOne(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	alerts, _ := issueChannelAndToken(t, repository, "alerts")
+	notifs, _ := issueChannelAndToken(t, repository, "notifications")
+	token := session(t, server, "thomas", testPassword)
+
+	// The default: the night, for everybody.
+	if r := call(t, server, http.MethodPut, "/api/v1/quiet-hours", token,
+		quietHoursPayload{From: "23:00", To: "07:00"}); r.Code != http.StatusOK {
+		t.Fatalf("default: %d %s", r.Code, r.Body)
+	}
+	// The override: on notifications, one also falls silent in the afternoon.
+	if r := call(t, server, http.MethodPut,
+		fmt.Sprintf("/api/v1/channels/%d/quiet-hours", notifs.ID), token,
+		quietHoursPayload{From: "14:00", To: "16:00"}); r.Code != http.StatusOK {
+		t.Fatalf("override: %d %s", r.Code, r.Body)
+	}
+
+	// The channel with no override inherits the default.
+	inherited, err := repository.QuietHoursFor(alerts.ID, "warning")
+	if err != nil || inherited.From != "23:00" || !inherited.IsDefault() {
+		t.Fatalf("inheritance = %+v (%v)", inherited, err)
+	}
+	// The one that has an override sees it win.
+	own, err := repository.QuietHoursFor(notifs.ID, "")
+	if err != nil || own.From != "14:00" || own.IsDefault() {
+		t.Fatalf("override = %+v (%v)", own, err)
+	}
+
+	// And a channel's listing shows both, each labelled.
+	listed := decode[[]quietHoursPayload](t, call(t, server, http.MethodGet,
+		fmt.Sprintf("/api/v1/channels/%d/quiet-hours", notifs.ID), token, nil))
+	scopes := map[string]string{}
+	for _, window := range listed {
+		scopes[window.Scope] = window.From
+	}
+	if scopes[scopeChannel] != "14:00" || scopes[scopeDefault] != "23:00" {
+		t.Fatalf("scopes = %+v", listed)
+	}
+}
+
+// A broad window, global or not, does not cover a critical.
+func TestTheGlobalWindowDoesNotCoverCriticals(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	channel, _ := issueChannelAndToken(t, repository, "alerts")
+	token := session(t, server, "thomas", testPassword)
+
+	if r := call(t, server, http.MethodPut, "/api/v1/quiet-hours", token,
+		quietHoursPayload{From: "00:00", To: "23:59"}); r.Code != http.StatusOK {
+		t.Fatalf("status = %d", r.Code)
+	}
+
+	critical, _ := repository.QuietHoursFor(channel.ID, "critical")
+	if critical.Set() {
+		t.Fatalf("a global window must not cover a critical: %+v", critical)
+	}
+	warning, _ := repository.QuietHoursFor(channel.ID, "warning")
+	if !warning.Set() {
+		t.Fatal("a warning should be covered by the global window")
 	}
 }

@@ -218,3 +218,23 @@ func (s *Store) SearchUsers(fragment string, limit int) ([]User, error) {
 	}
 	return users, rows.Err()
 }
+
+// AllUserIDs lists every account, for what concerns everybody — the global
+// mute is the first of those.
+func (s *Store) AllUserIDs() ([]int64, error) {
+	rows, err := s.db.Query(`SELECT id FROM users ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("listing the users: %w", err)
+	}
+	defer rows.Close()
+
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("reading a user: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}

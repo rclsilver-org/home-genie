@@ -303,3 +303,37 @@ func messageIDOf(event store.Event) int64 {
 	}
 	return envelope.ID
 }
+
+// publishToEveryone fans an event out to every account, for what is a
+// property of the installation rather than of a channel.
+func (s *Server) publishToEveryone(kind string, payload any) {
+	users, err := s.store.AllUserIDs()
+	if err != nil {
+		s.logger.Error("listing the users", "error", err, "kind", kind)
+		return
+	}
+	s.publishToUsers(users, kind, payload)
+}
+
+// publishPerUser fans an event out with a payload computed for each
+// recipient.
+//
+// One payload for everybody was enough until the mute became personal: the
+// same message is now silent for one member and audible for the next, and
+// that difference has to exist in what each device receives, not in what the
+// server stores.
+func (s *Server) publishPerUser(userIDs []int64, kind string, payload func(int64) any) {
+	events := make([]store.Event, 0, len(userIDs))
+	for _, userID := range userIDs {
+		event, err := s.store.AppendEvent(userID, kind, payload(userID))
+		if err != nil {
+			s.logger.Error("recording the event", "error", err, "kind", kind,
+				"user_id", userID)
+			// The other recipients must not pay for this one's failure: a
+			// partial delivery beats none.
+			continue
+		}
+		events = append(events, event)
+	}
+	s.hub.PublishAll(events)
+}

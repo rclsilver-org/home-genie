@@ -55,3 +55,26 @@ func Version(handle *sql.DB, name string) (version int, dirty bool, err error) {
 	}
 	return driver.Version()
 }
+
+// MigrateTo brings the schema to a given version, up or down. It exists for
+// the tests, which need to populate an old schema and then migrate over it:
+// a migration that silently drops data looks exactly like a correct one when
+// the database is empty.
+func MigrateTo(handle *sql.DB, name string, version uint) error {
+	source, err := iofs.New(migrations, "migrations")
+	if err != nil {
+		return fmt.Errorf("reading the embedded migrations: %w", err)
+	}
+	driver, err := sqlite.WithInstance(handle, &sqlite.Config{})
+	if err != nil {
+		return fmt.Errorf("preparing the migration driver: %w", err)
+	}
+	migrator, err := migrate.NewWithInstance("iofs", source, name, driver)
+	if err != nil {
+		return fmt.Errorf("preparing the migrator: %w", err)
+	}
+	if err := migrator.Migrate(version); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		return fmt.Errorf("migrating to %d: %w", version, err)
+	}
+	return nil
+}
