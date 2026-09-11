@@ -230,9 +230,9 @@ func TestQuietHoursSilenceANotificationWithoutHoldingIt(t *testing.T) {
 	}
 }
 
-// A critical alert never falls silent: if it could wait until morning, it
-// should not have been critical.
-func TestQuietHoursNeverSilenceACritical(t *testing.T) {
+// A window set on the whole channel does not cover criticals: one silences
+// the *arr suite without silencing oneself about a full disk.
+func TestAChannelWideWindowDoesNotCoverCriticals(t *testing.T) {
 	httpServer, server, token := liveServer(t)
 
 	channel := decode[channelPayload](t, call(t, server, http.MethodPost, "/api/v1/channels",
@@ -258,7 +258,7 @@ func TestQuietHoursNeverSilenceACritical(t *testing.T) {
 		t.Fatal(err)
 	}
 	if critical.Priority != store.PriorityMax {
-		t.Fatalf("a critical must ring despite the window: %+v", critical)
+		t.Fatalf("a channel window must not cover a critical: %+v", critical)
 	}
 
 	// A warning, on the other hand, does fall silent.
@@ -271,5 +271,45 @@ func TestQuietHoursNeverSilenceACritical(t *testing.T) {
 	}
 	if warning.Priority != store.PriorityMin {
 		t.Fatalf("a warning should arrive silent: %+v", warning)
+	}
+}
+
+// But a window naming "critical" does silence them: on a homelab, a disk
+// filling up at three in the morning can wait until seven. The broad gesture
+// stays safe, the dangerous one stays deliberate.
+func TestAWindowNamingCriticalSilencesIt(t *testing.T) {
+	httpServer, server, token := liveServer(t)
+
+	channel := decode[channelPayload](t, call(t, server, http.MethodPost, "/api/v1/channels",
+		token, createChannelRequest{Slug: "alerts", Name: "Alerts"}))
+	publishToken := decode[publishTokenPayload](t, call(t, server, http.MethodPost,
+		fmt.Sprintf("/api/v1/channels/%d/tokens", channel.ID), token,
+		createTokenRequest{Name: "alertmanager"}))
+	if r := call(t, server, http.MethodPut,
+		fmt.Sprintf("/api/v1/channels/%d/quiet-hours", channel.ID), token,
+		quietHoursPayload{Severity: "critical", From: "00:00", To: "23:59"}); r.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", r.Code, r.Body)
+	}
+
+	conn := dial(t, httpServer.URL, token, 0)
+	readUntil(t, conn, frameReady)
+
+	webhook(t, server, "alerts", publishToken.Token, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("c", "critical")}})
+
+	frame := readUntil(t, conn, eventMessageNew)
+	var critical messagePayload
+	if err := json.Unmarshal(frame.Payload, &critical); err != nil {
+		t.Fatal(err)
+	}
+	if critical.Priority != store.PriorityMin {
+		t.Fatalf("the window names critical: it must silence it — %+v", critical)
+	}
+
+	// And the alert is there, open: silencing is not losing.
+	alerts := decode[[]alertPayload](t, call(t, server, http.MethodGet,
+		"/api/v1/alerts?unacked=1", token, nil))
+	if len(alerts) != 1 {
+		t.Fatalf("the alert must stay to be dealt with: %+v", alerts)
 	}
 }

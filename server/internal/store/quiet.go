@@ -76,15 +76,26 @@ func (s *Store) DeleteQuietHours(channelID int64, severity string) error {
 // QuietHoursFor resolves the window that applies: the one naming the
 // severity if there is one, otherwise the channel-wide one, otherwise none.
 //
+// With one exception: a channel-wide window does not cover critical alerts.
+// Silencing a critical is a legitimate thing to want — on a homelab a disk
+// filling up at three in the morning can wait until seven — but it must be
+// asked for by name, not inherited from a window set with the *arr suite in
+// mind. The broad gesture stays safe; the dangerous one stays deliberate.
+//
 // Returns a zero value rather than ErrNotFound: having no quiet hours is the
 // ordinary case, not a failure to look one up.
 func (s *Store) QuietHoursFor(channelID int64, severity string) (QuietHours, error) {
+	condition, args := "(severity = ? OR severity = '')", []any{channelID, severity}
+	if severity == SeverityCritical {
+		condition, args = "severity = ?", []any{channelID, severity}
+	}
+
 	row := s.db.QueryRow(
 		`SELECT channel_id, severity, quiet_from, quiet_to
 		   FROM quiet_hours
-		  WHERE channel_id = ? AND (severity = ? OR severity = '')
+		  WHERE channel_id = ? AND `+condition+`
 		  ORDER BY severity = ''
-		  LIMIT 1`, channelID, severity)
+		  LIMIT 1`, args...)
 
 	var window QuietHours
 	err := row.Scan(&window.ChannelID, &window.Severity, &window.From, &window.To)

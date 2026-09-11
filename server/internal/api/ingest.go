@@ -242,14 +242,12 @@ func (s *Server) publishMessage(channel store.Channel, message store.Message) {
 // alert held until morning is an alert lost. What the window buys is the
 // phone staying quiet; everything still arrives.
 //
-// A critical alert is never silenced. Quiet hours are for what can wait until
-// morning, and if a critical could wait it should not have been critical.
+// A critical is silenced only by a window that names it: the store refuses to
+// let a channel-wide window cover one. Silencing a critical is a legitimate
+// thing to want on a homelab, but not something to inherit by accident.
 func (s *Server) deliveryPriority(
 	channel store.Channel, message store.Message, severity string, priority int,
 ) int {
-	if severity == "critical" {
-		return priority
-	}
 	quiet, err := s.store.QuietHoursFor(channel.ID, severity)
 	if err != nil {
 		s.logger.Error("reading the quiet hours", "error", err, "channel_id", channel.ID)

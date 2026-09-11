@@ -16,6 +16,10 @@ const (
 	AlertResolved = "resolved"
 )
 
+// SeverityCritical is the one severity the rest of the system treats
+// specially: it is the level that may be silenced only on purpose.
+const SeverityCritical = "critical"
+
 // Alert is an Alertmanager alert as a stateful entity, keyed by the
 // fingerprint Alertmanager itself computes. Keeping the entity rather than
 // a stream of messages is what allows acknowledgement and reminders — the
