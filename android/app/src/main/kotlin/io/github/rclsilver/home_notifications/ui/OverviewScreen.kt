@@ -115,7 +115,7 @@ fun OverviewScreen(
     if (open.isEmpty()) return
 
     Text("The most recent", style = MaterialTheme.typography.titleMedium)
-    open.sortedWith(compareBy({ it.isAcked }, { !it.isOpen })).take(3).forEach { alert ->
+    open.take(3).forEach { alert ->
         Card(
             modifier = Modifier.fillMaxWidth(),
             onClick = { onOpen(Destination.ALERTS) },
