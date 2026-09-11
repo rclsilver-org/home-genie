@@ -146,3 +146,28 @@ func (s *Store) RevokePublishToken(channelID, tokenID int64) error {
 	}
 	return nil
 }
+
+// DeletePublishToken removes a token for good. Only a revoked one: the row is
+// what stops the token from publishing, so dropping a live one would look
+// like a revocation while silently leaving nothing to check against... and it
+// would in fact still be refused, since the lookup finds nothing. The real
+// reason is different: a token that disappears without having been revoked
+// leaves no trace that it ever existed, and the point of keeping revoked rows
+// is precisely to be able to say which producer was cut off and when.
+func (s *Store) DeletePublishToken(channelID, tokenID int64) error {
+	result, err := s.db.Exec(
+		`DELETE FROM publish_tokens
+		  WHERE id = ? AND channel_id = ? AND revoked_at IS NOT NULL`,
+		tokenID, channelID)
+	if err != nil {
+		return fmt.Errorf("deleting the token: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("reading the result: %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

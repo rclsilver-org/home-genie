@@ -390,9 +390,18 @@ func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The first DELETE revokes, the second erases. Revoking cuts publishing
+	// immediately and keeps the row, which is the only trace saying
+	// which producer was cut off and when; once that trace has served, the
+	// same gesture removes it from the list.
 	err = s.store.RevokePublishToken(channel.ID, tokenID)
 	if errors.Is(err, store.ErrNotFound) {
-		s.writeError(w, http.StatusNotFound, "unknown token")
+		if err := s.store.DeletePublishToken(channel.ID, tokenID); err != nil {
+			s.writeError(w, http.StatusNotFound, "unknown token")
+			return
+		}
+		s.logger.Info("publish token deleted", "channel", channel.Slug, "token_id", tokenID)
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if err != nil {

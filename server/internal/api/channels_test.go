@@ -286,3 +286,41 @@ func TestTokenRequiresAName(t *testing.T) {
 		t.Fatalf("status = %d, want 400", r.Code)
 	}
 }
+
+// The same gesture, twice: revoke then erase. A revoked token one cannot
+// remove clutters the list forever.
+func TestARevokedTokenCanThenBeDeleted(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	channel, _ := issueChannelAndToken(t, repository, "alerts")
+	token := session(t, server, "thomas", testPassword)
+
+	issued := decode[publishTokenPayload](t, call(t, server, http.MethodPost,
+		fmt.Sprintf("/api/v1/channels/%d/tokens", channel.ID), token,
+		createTokenRequest{Name: "sonarr"}))
+	path := fmt.Sprintf("/api/v1/channels/%d/tokens/%d", channel.ID, issued.ID)
+
+	if r := call(t, server, http.MethodDelete, path, token, nil); r.Code != http.StatusNoContent {
+		t.Fatalf("revocation: %d %s", r.Code, r.Body)
+	}
+	// Revoked but still listed: that is the trace of what was cut off.
+	listed := decode[[]publishTokenPayload](t, call(t, server, http.MethodGet,
+		fmt.Sprintf("/api/v1/channels/%d/tokens", channel.ID), token, nil))
+	if len(listed) != 2 {
+		t.Fatalf("the revoked token should stay listed: %+v", listed)
+	}
+
+	if r := call(t, server, http.MethodDelete, path, token, nil); r.Code != http.StatusNoContent {
+		t.Fatalf("deletion: %d %s", r.Code, r.Body)
+	}
+	listed = decode[[]publishTokenPayload](t, call(t, server, http.MethodGet,
+		fmt.Sprintf("/api/v1/channels/%d/tokens", channel.ID), token, nil))
+	if len(listed) != 1 {
+		t.Fatalf("the token should be gone: %+v", listed)
+	}
+
+	// A third call finds nothing any more.
+	if r := call(t, server, http.MethodDelete, path, token, nil); r.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", r.Code)
+	}
+}

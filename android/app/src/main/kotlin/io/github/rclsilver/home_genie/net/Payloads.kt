@@ -39,7 +39,16 @@ data class ChannelPayload(
     val description: String = "",
     val role: String = "",
     val unread: Int = 0,
-)
+    // Null when the channel is not muted — the absence of a date is the
+    // information, and a past date would mean the same thing.
+    @SerialName("muted_until") val mutedUntil: String? = null,
+) {
+    val isMuted: Boolean
+        get() = mutedUntil?.let {
+            runCatching { java.time.Instant.parse(it).isAfter(java.time.Instant.now()) }
+                .getOrDefault(false)
+        } ?: false
+}
 
 /** An Alertmanager alert, as the server exposes it. */
 @Serializable

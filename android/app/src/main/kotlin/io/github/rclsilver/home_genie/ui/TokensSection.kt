@@ -3,6 +3,7 @@ package io.github.rclsilver.home_genie.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -97,13 +98,16 @@ fun TokensSection(channelId: Long, channelSlug: String, serverUrl: String, token
     }
 
     tokens.forEach { existing ->
-        Card(modifier = Modifier.fillMaxWidth()) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column {
+                Column(Modifier.weight(1f)) {
                     Text(existing.name, style = MaterialTheme.typography.titleSmall)
                     Text(
                         when {
@@ -117,15 +121,16 @@ fun TokensSection(channelId: Long, channelSlug: String, serverUrl: String, token
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                if (!existing.isRevoked) {
-                    TextButton(onClick = {
-                        scope.launch {
-                            revokePublishToken(serverUrl, token, channelId, existing.id)
-                                .onSuccess { reloads++ }
-                                .onFailure { error = it.message ?: "revocation failed" }
-                        }
-                    }) { Text("Revoke") }
-                }
+                // The same button does both steps: revoking cuts publishing and
+                // keeps the row, which says which producer was cut off; once
+                // that trace is useless, it is erased.
+                TextButton(onClick = {
+                    scope.launch {
+                        revokePublishToken(serverUrl, token, channelId, existing.id)
+                            .onSuccess { reloads++; error = "" }
+                            .onFailure { error = it.message ?: "failed" }
+                    }
+                }) { Text(if (existing.isRevoked) "Delete" else "Revoke") }
             }
         }
     }

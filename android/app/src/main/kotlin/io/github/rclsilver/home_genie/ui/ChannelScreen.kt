@@ -75,39 +75,66 @@ fun ChannelScreen(
  * maintenance, and computing an instant by hand on a phone is a chore. The
  * mute is an attribute of the channel, so it holds for all of its members —
  * it is not a personal setting.
+ *
+ * Not to be confused with quiet hours: a mute **drops**, quiet hours merely
+ * silence. What arrives while muted produces no notification, and nothing
+ * catches it up.
  */
 @Composable
 private fun MuteRow(channel: ChannelPayload, serverUrl: String, token: String) {
     val scope = rememberCoroutineScope()
-    var state by remember(channel.id) { mutableStateOf("") }
+    // The state comes from the server when the screen opens, then from what
+    // was just done: the channel list is not reloaded from this screen.
+    var mutedUntil by remember(channel.id) {
+        mutableStateOf(if (channel.isMuted) channel.mutedUntil else null)
+    }
+    var error by remember(channel.id) { mutableStateOf("") }
+
+    Text("Mute", style = MaterialTheme.typography.titleMedium)
+    Text(
+        mutedUntil?.let { "Muted until ${localTime(it)} — nothing will arrive before then." }
+            ?: "No mute. This channel's messages notify normally.",
+        style = MaterialTheme.typography.bodySmall,
+    )
 
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("Mute", style = MaterialTheme.typography.titleMedium)
         listOf(1L, 4L, 24L).forEach { hours ->
             TextButton(onClick = {
                 scope.launch {
                     val until = Instant.now().plus(hours, ChronoUnit.HOURS)
                         .truncatedTo(ChronoUnit.SECONDS)
                     muteChannel(serverUrl, token, channel.id, until.toString())
-                        .onSuccess { state = "muted for ${hours}h" }
-                        .onFailure { state = it.message ?: "failed" }
+                        .onSuccess { mutedUntil = until.toString(); error = "" }
+                        .onFailure { error = it.message ?: "failed" }
                 }
             }) { Text("${hours}h") }
         }
-        TextButton(onClick = {
-            scope.launch {
-                // An empty string lifts the mute, as the API wants.
-                muteChannel(serverUrl, token, channel.id, "")
-                    .onSuccess { state = "mute lifted" }
-                    .onFailure { state = it.message ?: "failed" }
-            }
-        }) { Text("Lever") }
+        // Nothing to lift when nothing is set: the button only shows up when
+        // it has something to undo.
+        if (mutedUntil != null) {
+            TextButton(onClick = {
+                scope.launch {
+                    // An empty string lifts the mute, as the API wants.
+                    muteChannel(serverUrl, token, channel.id, "")
+                        .onSuccess { mutedUntil = null; error = "" }
+                        .onFailure { error = it.message ?: "failed" }
+                }
+            }) { Text("Unmute") }
+        }
     }
-    if (state.isNotEmpty()) {
-        Text(state, style = MaterialTheme.typography.bodySmall)
+    if (error.isNotEmpty()) {
+        Text(error, color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodySmall)
     }
 }
+
+/** A readable local time, from an RFC3339 instant. */
+private fun localTime(rfc3339: String): String = runCatching {
+    java.time.format.DateTimeFormatter.ofPattern("HH:mm")
+        .withZone(java.time.ZoneId.systemDefault())
+        .format(java.time.Instant.parse(rfc3339))
+}.getOrElse { rfc3339 }
