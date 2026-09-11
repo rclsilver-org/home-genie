@@ -121,6 +121,8 @@ fun ChannelScreen(
 
     RemindersSection(channel.id, serverUrl, token)
 
+    MembersSection(channel.id, serverUrl, token, isOwner = channel.role == "owner")
+
     TokensSection(channel.id, channel.slug, serverUrl, token)
 
     Text("Messages", style = MaterialTheme.typography.titleMedium)

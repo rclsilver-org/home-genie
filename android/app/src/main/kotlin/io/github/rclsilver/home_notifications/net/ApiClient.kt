@@ -387,3 +387,70 @@ suspend fun fetchAlertDetail(serverUrl: String, token: String, alertId: Long):
         }
     }
 }
+
+/** A channel's members, with their role. */
+suspend fun fetchMembers(serverUrl: String, token: String, channelId: Long):
+    Result<List<MemberPayload>> = withContext(Dispatchers.IO) {
+    runCatching {
+        get(serverUrl, token, "/api/v1/channels/$channelId/members") { text ->
+            Json { ignoreUnknownKeys = true }
+                .decodeFromString(ListSerializer(MemberPayload.serializer()), text)
+        }
+    }
+}
+
+/**
+ * Gives someone a role on a channel — this is both the addition and the
+ * role change, the server does not tell them apart.
+ */
+suspend fun setMember(serverUrl: String, token: String, channelId: Long, username: String,
+                      role: String): Result<MemberPayload> = withContext(Dispatchers.IO) {
+    runCatching {
+        val call = ApiClient.defaultClient().newCall(
+            Request.Builder()
+                .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId/members/$username")
+                .put("""{"role":"$role"}""".toRequestBodyJson())
+                .header("Authorization", "Bearer $token")
+                .build()
+        )
+        call.execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                // The server explains why it refuses — "unknown user",
+                // "removing the last owner…" — and that sentence is what has
+                // to be shown, not a status code.
+                val message = runCatching {
+                    Json { ignoreUnknownKeys = true }
+                        .decodeFromString(ErrorResponse.serializer(), text).error
+                }.getOrElse { "HTTP error ${response.code}" }
+                throw IOException(message)
+            }
+            Json { ignoreUnknownKeys = true }
+                .decodeFromString(MemberPayload.serializer(), text)
+        }
+    }
+}
+
+/** Removes somebody from a channel. */
+suspend fun removeMember(serverUrl: String, token: String, channelId: Long, username: String):
+    Result<Unit> = withContext(Dispatchers.IO) {
+    runCatching {
+        val call = ApiClient.defaultClient().newCall(
+            Request.Builder()
+                .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId/members/$username")
+                .delete()
+                .header("Authorization", "Bearer $token")
+                .build()
+        )
+        call.execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                val message = runCatching {
+                    Json { ignoreUnknownKeys = true }
+                        .decodeFromString(ErrorResponse.serializer(), text).error
+                }.getOrElse { "HTTP error ${response.code}" }
+                throw IOException(message)
+            }
+        }
+    }
+}

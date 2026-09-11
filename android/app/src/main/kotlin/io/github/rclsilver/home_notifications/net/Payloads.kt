@@ -132,3 +132,17 @@ data class AlertLogEntryPayload(
     val kind: String = "",
     val detail: String = "",
 )
+
+/**
+ * A member of a channel.
+ *
+ * [role] is "owner", "writer" or "reader" — the server's vocabulary, kept as
+ * it is so the screen and the API speak of the same thing.
+ */
+@Serializable
+data class MemberPayload(
+    @SerialName("user_id") val userId: Long,
+    val username: String = "",
+    @SerialName("display_name") val displayName: String = "",
+    val role: String = "",
+)
