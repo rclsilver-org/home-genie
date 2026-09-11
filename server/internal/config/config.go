@@ -12,7 +12,7 @@ import (
 
 var (
 	defaultConfigFile   = "config.yaml"
-	defaultDatabaseFile = "hnotifd.db"
+	defaultDatabaseFile = "hgenied.db"
 )
 
 // DefaultConfigFile is the configuration path used when none is given on the

@@ -4,42 +4,42 @@ set -e
 
 case "$1" in
     configure)
-        if ! getent group home-notifications >/dev/null; then
-            addgroup --system home-notifications
+        if ! getent group home-genie >/dev/null; then
+            addgroup --system home-genie
         fi
 
         # Created before adduser, otherwise adduser warns about a home
         # directory it cannot reach on every fresh install.
-        mkdir -p /var/lib/home-notifications
+        mkdir -p /var/lib/home-genie
 
-        if ! getent passwd home-notifications >/dev/null; then
-            adduser --system --ingroup home-notifications              \
-                    --home /var/lib/home-notifications --no-create-home \
-                    --gecos "home-notifications server"                 \
-                    home-notifications
+        if ! getent passwd home-genie >/dev/null; then
+            adduser --system --ingroup home-genie              \
+                    --home /var/lib/home-genie --no-create-home \
+                    --gecos "home-genie server"                 \
+                    home-genie
         fi
 
-        chown home-notifications:home-notifications /var/lib/home-notifications
-        chmod 0750 /var/lib/home-notifications
+        chown home-genie:home-genie /var/lib/home-genie
+        chmod 0750 /var/lib/home-genie
 
         # Whatever credentials the configuration may one day carry are for
         # the service to read, not for everyone.
-        if [ -f /etc/home-notifications/config.yaml ]; then
-            chown root:home-notifications /etc/home-notifications/config.yaml
-            chmod 0640 /etc/home-notifications/config.yaml
+        if [ -f /etc/home-genie/config.yaml ]; then
+            chown root:home-genie /etc/home-genie/config.yaml
+            chmod 0640 /etc/home-genie/config.yaml
         fi
         ;;
 esac
 
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
-    systemctl enable home-notifications.service || true
+    systemctl enable home-genie.service || true
 
     # Restart on upgrade only. On a fresh install the shipped configuration is
     # still a template, and configuration management owns the service state, so
     # starting here would only produce a failing unit.
     if [ "$1" = "configure" ] && [ -n "$2" ]; then
-        systemctl try-restart home-notifications.service || true
+        systemctl try-restart home-genie.service || true
     fi
 fi
 

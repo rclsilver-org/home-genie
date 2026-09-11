@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rclsilver-org/home-notifications/server/internal/db"
+	"github.com/rclsilver-org/home-genie/server/internal/db"
 )
 
 func newTestStore(t *testing.T) *Store {

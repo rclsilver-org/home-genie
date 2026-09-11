@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/rclsilver-org/home-notifications/server/internal/auth"
-	"github.com/rclsilver-org/home-notifications/server/internal/store"
+	"github.com/rclsilver-org/home-genie/server/internal/auth"
+	"github.com/rclsilver-org/home-genie/server/internal/store"
 )
 
 // The ingest routes land in the next slice; the middleware they will use is

@@ -6,7 +6,7 @@ if [ "$1" = "remove" ] && [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
 fi
 
-# /var/lib/home-notifications is deliberately left in place, even on purge: it
+# /var/lib/home-genie is deliberately left in place, even on purge: it
 # holds the alert history and the device tokens. Removing it is a manual,
 # deliberate act.
 

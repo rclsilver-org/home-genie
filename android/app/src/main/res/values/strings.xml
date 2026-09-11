@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Notifications</string>
+    <!-- The displayed name is written as a proper noun; the technical
+         identifier, the package and the repository keep "home-genie" in
+         lower case. -->
+    <string name="app_name">Home Genie</string>
 </resources>

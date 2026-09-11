@@ -1,5 +1,5 @@
-BINARY = hnotifd
-PKG    = github.com/rclsilver-org/home-notifications
+BINARY = hgenied
+PKG    = github.com/rclsilver-org/home-genie
 
 SOURCE_FILES = $(shell find server -type f -name '*.go' -not -name '*_test.go')
 
@@ -8,7 +8,7 @@ CONFIG_PKG  = $(PKG)/server/internal/config
 
 # Overridden by the CI so the packaged binary points at /etc and /var/lib.
 DEFAULT_CONF_FILE ?= config.yaml
-DEFAULT_DB_FILE   ?= hnotifd.db
+DEFAULT_DB_FILE   ?= hgenied.db
 
 VERSION    ?= $(shell ./generate-version.sh)
 LAST_COMMIT = $(shell git rev-parse HEAD)

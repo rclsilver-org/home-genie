@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The navy of the icon's plate: the adaptive background continues the
+         illustration instead of framing it in another colour, whatever shape
+         the launcher imposes. -->
+    <color name="ic_launcher_background">#08225A</color>
+</resources>

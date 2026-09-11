@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rclsilver-org/home-notifications/server/internal/auth"
-	"github.com/rclsilver-org/home-notifications/server/internal/store"
+	"github.com/rclsilver-org/home-genie/server/internal/auth"
+	"github.com/rclsilver-org/home-genie/server/internal/store"
 )
 
 type channelPayload struct {

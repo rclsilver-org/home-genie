@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "home-notifications"
+rootProject.name = "home-genie"
 include(":app")

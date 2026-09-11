@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rclsilver-org/home-notifications/server/internal/oidc"
-	"github.com/rclsilver-org/home-notifications/server/internal/oidc/oidctest"
+	"github.com/rclsilver-org/home-genie/server/internal/oidc"
+	"github.com/rclsilver-org/home-genie/server/internal/oidc/oidctest"
 )
 
 const clientID = "home-notifications"

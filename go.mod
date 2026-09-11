@@ -1,4 +1,4 @@
-module github.com/rclsilver-org/home-notifications
+module github.com/rclsilver-org/home-genie
 
 go 1.25.0
 

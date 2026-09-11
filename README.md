@@ -1,6 +1,6 @@
-# home-notifications
+# home-genie
 
-A replacement for ntfy in a homelab: a Go server (`hnotifd`) and a native Android
+A replacement for ntfy in a homelab: a Go server (`hgenied`) and a native Android
 application. Alertmanager alerts have a real lifecycle in it — opening, acknowledgement,
 reminders, closing — and the notifications of the homelab's applications read as a
 shared feed with a "seen" state per user.
@@ -42,7 +42,7 @@ To run it locally:
 ```sh
 cp config.example.yaml config.yaml
 # set listen to 0.0.0.0:8080 so that the phone reaches the server over the LAN
-./dist/hnotifd-linux-amd64 -config config.yaml
+./dist/hgenied-linux-amd64 -config config.yaml
 ```
 
 The SQLite database is created and migrated at startup; `/healthz` returns the schema
@@ -82,8 +82,8 @@ back and it will have to be downloaded again.
 ### Identifiants
 
 ```
-applicationId   io.github.rclsilver.home_notifications
-OAuth scheme    io.github.rclsilver.home-notifications://oauth2redirect
+applicationId   io.github.rclsilver.home_genie
+OAuth scheme    io.github.rclsilver.home-genie://oauth2redirect
 ```
 
 The scheme carries a **dash** where the `applicationId` carries an underscore, and that
@@ -123,7 +123,7 @@ putting anything on the target host.
 the reverse proxy serves — `websocket` is `true` by default, hence the
 `Upgrade`/`Connection` headers, `proxy_buffering off` and `proxy_read_timeout 3600s`.
 A socket opened through that proxy over TLS does receive the live events, not only the
-replay. The `hnotifd` vhost is therefore a copy of the ntfy one.
+replay. The `hgenied` vhost is therefore a copy of the ntfy one.
 
 Beware of a coupling nothing signals in the nginx configuration: the heartbeat interval
 must stay well below `proxy_read_timeout`, since every beat rearms that counter.
@@ -133,7 +133,7 @@ Spacing the heartbeats out beyond it to save battery would have nginx cut the so
 privilege and no change to `binfmt_misc`:
 
 ```sh
-nix-shell -p qemu --run 'qemu-aarch64 ./dist/hnotifd-linux-arm64 -version'
+nix-shell -p qemu --run 'qemu-aarch64 ./dist/hgenied-linux-arm64 -version'
 ```
 
 It starts, migrates its database and answers on `/healthz`. That is what proves the
@@ -151,15 +151,14 @@ Built by CI (`jiro4989/build-deb-action`) and published in the release with the
 binaries: `latest` as a prerelease on every push to `master`, a tagged release on
 `v*.*.*`.
 
-The package installs `/usr/bin/hnotifd`, the conffile
-`/etc/home-notifications/config.yaml` and the systemd unit. The `postinst` creates the
-system user and `/var/lib/home-notifications`, **enables** the service but does not
-start it on a first installation: configuration management lays down the real
-configuration and then starts the service. On an upgrade, the service is restarted if
-it was running.
+The package installs `/usr/bin/hgenied`, the conffile `/etc/home-genie/config.yaml`
+and the systemd unit. The `postinst` creates the system user and
+`/var/lib/home-genie`, **enables** the service but does not start it on a first
+installation: configuration management lays down the real configuration and then starts
+the service. On an upgrade, the service is restarted if it was running.
 
-`/var/lib/home-notifications` is deliberately kept, even on a purge: it holds the alert
-history and the device tokens.
+`/var/lib/home-genie` is deliberately kept, even on a purge: it holds the alert history
+and the device tokens.
 
 Validating the package locally, without touching the target host:
 

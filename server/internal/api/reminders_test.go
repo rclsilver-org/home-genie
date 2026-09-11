@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/rclsilver-org/home-notifications/server/internal/store"
+	"github.com/rclsilver-org/home-genie/server/internal/store"
 )
 
 func TestReminderPolicyIsSetAndListed(t *testing.T) {

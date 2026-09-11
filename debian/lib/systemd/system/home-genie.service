@@ -1,0 +1,40 @@
+[Unit]
+Description=home-genie server (hgenied)
+Documentation=https://github.com/rclsilver-org/home-genie
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=home-genie
+Group=home-genie
+ExecStart=/usr/bin/hgenied -config /etc/home-genie/config.yaml
+Restart=on-failure
+RestartSec=5s
+
+StateDirectory=home-genie
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/home-genie
+
+# Hardening. The service only needs to listen on a socket and write its SQLite
+# file, so everything else is taken away.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

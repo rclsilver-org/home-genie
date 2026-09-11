@@ -11,7 +11,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/rclsilver-org/home-notifications/server/internal/store"
+	"github.com/rclsilver-org/home-genie/server/internal/store"
 )
 
 // tick is how often the due alerts are looked up. Well under the shortest

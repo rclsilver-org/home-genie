@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rclsilver-org/home-notifications/server/internal/db"
-	"github.com/rclsilver-org/home-notifications/server/internal/store"
+	"github.com/rclsilver-org/home-genie/server/internal/db"
+	"github.com/rclsilver-org/home-genie/server/internal/store"
 )
 
 // recorder captures the reminders instead of sending them.

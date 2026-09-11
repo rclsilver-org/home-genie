@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/rclsilver-org/home-notifications/server/internal/store"
+	"github.com/rclsilver-org/home-genie/server/internal/store"
 )
 
 // The notifications feed crosses the channels, and carries only what lives

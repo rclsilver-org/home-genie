@@ -1,6 +1,6 @@
 # Client ↔ server protocol
 
-The contract between `hnotifd` and its clients. Versioned here so that an iOS port
+The contract between `hgenied` and its clients. Versioned here so that an iOS port
 (out of scope for v1) can start from an explicit reference rather than from the
 Android code.
 

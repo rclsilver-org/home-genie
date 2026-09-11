@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rclsilver-org/home-notifications/server/internal/store"
+	"github.com/rclsilver-org/home-genie/server/internal/store"
 )
 
 // maxBodySize bounds a published message. Generous for text, small enough

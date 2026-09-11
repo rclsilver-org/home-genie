@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/rclsilver-org/home-notifications/server/internal/store"
+	"github.com/rclsilver-org/home-genie/server/internal/store"
 )
 
 // shareChannel adds a second member so read state can be compared between

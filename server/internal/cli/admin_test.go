@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rclsilver-org/home-notifications/server/internal/auth"
-	"github.com/rclsilver-org/home-notifications/server/internal/db"
-	"github.com/rclsilver-org/home-notifications/server/internal/store"
+	"github.com/rclsilver-org/home-genie/server/internal/auth"
+	"github.com/rclsilver-org/home-genie/server/internal/db"
+	"github.com/rclsilver-org/home-genie/server/internal/store"
 )
 
 func newTestStore(t *testing.T) *store.Store {

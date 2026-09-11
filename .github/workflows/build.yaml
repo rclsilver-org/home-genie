@@ -45,20 +45,20 @@ jobs:
 
       - name: Build the binaries
         run: |
-          DEFAULT_CONF_FILE=/etc/home-notifications/config.yaml \
-          DEFAULT_DB_FILE=/var/lib/home-notifications/hnotifd.db \
+          DEFAULT_CONF_FILE=/etc/home-genie/config.yaml \
+          DEFAULT_DB_FILE=/var/lib/home-genie/hgenied.db \
             make binaries
 
       - name: Prepare the package roots
         run: |
           mkdir -p debian/usr/bin
-          mkdir -p debian/etc/home-notifications
-          cp config.example.yaml debian/etc/home-notifications/config.yaml
+          mkdir -p debian/etc/home-genie
+          cp config.example.yaml debian/etc/home-genie/config.yaml
 
           for arch in amd64 arm64; do
               cp -R debian .debpkg-${arch}
-              cp dist/hnotifd-linux-${arch} .debpkg-${arch}/usr/bin/hnotifd
-              chmod 0755 .debpkg-${arch}/usr/bin/hnotifd
+              cp dist/hgenied-linux-${arch} .debpkg-${arch}/usr/bin/hgenied
+              chmod 0755 .debpkg-${arch}/usr/bin/hgenied
           done
 
       # Third-party actions are pinned to a commit rather than a tag: a tag
@@ -67,33 +67,33 @@ jobs:
         id: build_deb_amd64
         uses: jiro4989/build-deb-action@6fd859b1fa14f611f462f031d7a07a845b8155c6 # v3
         with:
-          package: home-notifications
+          package: home-genie
           package_root: .debpkg-amd64
           maintainer: Thomas Bétrancourt <thomas@betrancourt.net>
           version: ${{ steps.version.outputs.value }}
           arch: 'amd64'
-          desc: 'home-notifications server (hnotifd)'
-          homepage: 'https://github.com/rclsilver-org/home-notifications'
+          desc: 'home-genie server (hgenied)'
+          homepage: 'https://github.com/rclsilver-org/home-genie'
 
       - name: Build the arm64 package
         id: build_deb_arm64
         uses: jiro4989/build-deb-action@6fd859b1fa14f611f462f031d7a07a845b8155c6 # v3
         with:
-          package: home-notifications
+          package: home-genie
           package_root: .debpkg-arm64
           maintainer: Thomas Bétrancourt <thomas@betrancourt.net>
           version: ${{ steps.version.outputs.value }}
           arch: 'arm64'
-          desc: 'home-notifications server (hnotifd)'
-          homepage: 'https://github.com/rclsilver-org/home-notifications'
+          desc: 'home-genie server (hgenied)'
+          homepage: 'https://github.com/rclsilver-org/home-genie'
 
       - name: Upload the artifacts
         uses: actions/upload-artifact@v7
         with:
           name: server
           path: |
-            dist/hnotifd-linux-amd64
-            dist/hnotifd-linux-arm64
+            dist/hgenied-linux-amd64
+            dist/hgenied-linux-arm64
             ${{ steps.build_deb_amd64.outputs.file_name }}
             ${{ steps.build_deb_arm64.outputs.file_name }}
 

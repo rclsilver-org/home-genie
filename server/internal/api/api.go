@@ -8,9 +8,9 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/rclsilver-org/home-notifications/server/internal/hub"
-	"github.com/rclsilver-org/home-notifications/server/internal/oidc"
-	"github.com/rclsilver-org/home-notifications/server/internal/store"
+	"github.com/rclsilver-org/home-genie/server/internal/hub"
+	"github.com/rclsilver-org/home-genie/server/internal/oidc"
+	"github.com/rclsilver-org/home-genie/server/internal/store"
 )
 
 // Server carries what the handlers need.

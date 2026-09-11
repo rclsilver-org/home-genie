@@ -9,7 +9,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/rclsilver-org/home-notifications/server/internal/store"
+	"github.com/rclsilver-org/home-genie/server/internal/store"
 )
 
 const (

@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "io.github.rclsilver.home_notifications"
+    namespace = "io.github.rclsilver.home_genie"
     compileSdk = 36
 
     // Pinned on purpose: AGP otherwise resolves its own default (34.0.0) and
@@ -16,7 +16,7 @@ android {
     buildToolsVersion = "36.0.0"
 
     defaultConfig {
-        applicationId = "io.github.rclsilver.home_notifications"
+        applicationId = "io.github.rclsilver.home_genie"
         minSdk = 29
 
         // The test phone runs Android 16. Targeting it rather than 35 means the

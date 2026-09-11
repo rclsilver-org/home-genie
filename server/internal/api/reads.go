@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/rclsilver-org/home-notifications/server/internal/store"
+	"github.com/rclsilver-org/home-genie/server/internal/store"
 )
 
 // Event kinds telling a user's other devices that read state moved, so

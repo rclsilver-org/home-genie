@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/rclsilver-org/home-notifications/server/internal/store"
+	"github.com/rclsilver-org/home-genie/server/internal/store"
 )
 
 type reminderPolicyPayload struct {

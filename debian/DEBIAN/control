@@ -1,6 +1,6 @@
-Package: home-notifications
+Package: home-genie
 Section: net
 Priority: optional
 Depends: adduser
 Maintainer: rclsilver
-Description: https://github.com/rclsilver-org/home-notifications
+Description: https://github.com/rclsilver-org/home-genie

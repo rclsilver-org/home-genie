@@ -1,4 +1,4 @@
-// Package cli holds the administrative subcommands of hnotifd. They exist so
+// Package cli holds the administrative subcommands of hgenied. They exist so
 // that the break-glass account can be created without a running server and
 // without an HTTP client — typically when the identity provider is down.
 package cli
@@ -13,8 +13,8 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/rclsilver-org/home-notifications/server/internal/auth"
-	"github.com/rclsilver-org/home-notifications/server/internal/store"
+	"github.com/rclsilver-org/home-genie/server/internal/auth"
+	"github.com/rclsilver-org/home-genie/server/internal/store"
 )
 
 // minPasswordLength is a floor, not a policy. The account is meant to be the

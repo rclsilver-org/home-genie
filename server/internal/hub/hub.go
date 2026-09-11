@@ -8,7 +8,7 @@ package hub
 import (
 	"sync"
 
-	"github.com/rclsilver-org/home-notifications/server/internal/store"
+	"github.com/rclsilver-org/home-genie/server/internal/store"
 )
 
 // bufferSize is how far a slow socket may lag before it is dropped.
