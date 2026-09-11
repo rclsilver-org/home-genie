@@ -72,6 +72,8 @@ func (s *Server) Routes() *http.ServeMux {
 
 	mux.Handle("GET /api/v1/channels/{id}/reminders", device(s.handleListReminderPolicies))
 	mux.Handle("PUT /api/v1/channels/{id}/reminders", device(s.handleSetReminderPolicy))
+	mux.Handle("GET /api/v1/channels/{id}/quiet-hours", device(s.handleListQuietHours))
+	mux.Handle("PUT /api/v1/channels/{id}/quiet-hours", device(s.handleSetQuietHours))
 
 	mux.Handle("GET /api/v1/ws", device(s.handleWS))
 

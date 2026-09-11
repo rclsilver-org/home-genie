@@ -159,8 +159,12 @@ func TestQuietHoursPushTheNextReminderOut(t *testing.T) {
 	repository, notifier, scheduler, channel := newFixture(t, now)
 
 	if err := repository.SetReminderPolicy(store.ReminderPolicy{
-		Severity: "warning", Interval: 30 * time.Minute, Enabled: true,
-		QuietFrom: "23:00", QuietTo: "07:00"}); err != nil {
+		Severity: "warning", Interval: 30 * time.Minute, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.SetQuietHours(store.QuietHours{
+		ChannelID: channel.ID, Severity: "warning",
+		From: "23:00", To: "07:00"}); err != nil {
 		t.Fatal(err)
 	}
 	past := now.Add(-time.Minute)

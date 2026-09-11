@@ -17,8 +17,7 @@ func TestReminderPolicyIsSetAndListed(t *testing.T) {
 	path := fmt.Sprintf("/api/v1/channels/%d/reminders", channel.ID)
 
 	recorder := call(t, server, http.MethodPut, path, token, reminderPolicyPayload{
-		Severity: "critical", IntervalSeconds: 900,
-		QuietFrom: "23:00", QuietTo: "07:00", Enabled: true,
+		Severity: "critical", IntervalSeconds: 900, Enabled: true,
 	})
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body)
@@ -31,9 +30,6 @@ func TestReminderPolicyIsSetAndListed(t *testing.T) {
 	if listed[0].Scope != scopeChannel || listed[0].IntervalSeconds != 900 {
 		t.Fatalf("politique = %+v", listed[0])
 	}
-	if listed[0].QuietFrom != "23:00" || listed[0].QuietTo != "07:00" {
-		t.Fatalf("heures calmes perdues : %+v", listed[0])
-	}
 }
 
 // Half a quiet window would silence at an unpredictable hour.
@@ -44,12 +40,14 @@ func TestHalfAQuietWindowIsRefused(t *testing.T) {
 	token := session(t, server, "thomas", testPassword)
 	path := fmt.Sprintf("/api/v1/channels/%d/reminders", channel.ID)
 
-	for _, policy := range []reminderPolicyPayload{
-		{Severity: "critical", IntervalSeconds: 900, QuietFrom: "23:00", Enabled: true},
-		{Severity: "critical", IntervalSeconds: 900, QuietTo: "07:00", Enabled: true},
+	path = fmt.Sprintf("/api/v1/channels/%d/quiet-hours", channel.ID)
+	for _, window := range []quietHoursPayload{
+		{Severity: "critical", From: "23:00"},
+		{Severity: "critical", To: "07:00"},
+		{Severity: "critical", From: "minuit", To: "07:00"},
 	} {
-		if r := call(t, server, http.MethodPut, path, token, policy); r.Code != http.StatusBadRequest {
-			t.Errorf("%+v : status = %d, want 400", policy, r.Code)
+		if r := call(t, server, http.MethodPut, path, token, window); r.Code != http.StatusBadRequest {
+			t.Errorf("%+v: status = %d, want 400", window, r.Code)
 		}
 	}
 }
@@ -183,5 +181,95 @@ func TestAReminderCarriesItsRankBesideTheTitle(t *testing.T) {
 	// what is wrong with it.
 	if payload.Body != "DiskFull — nas" {
 		t.Fatalf("body = %q", payload.Body)
+	}
+}
+
+// Quiet hours silence, they do not hold back: the message arrives, but at
+// minimum priority, hence without noise.
+func TestQuietHoursSilenceANotificationWithoutHoldingIt(t *testing.T) {
+	httpServer, server, token := liveServer(t)
+
+	channel := decode[channelPayload](t, call(t, server, http.MethodPost, "/api/v1/channels",
+		token, createChannelRequest{Slug: "notifications", Name: "Notifications"}))
+	publishToken := decode[publishTokenPayload](t, call(t, server, http.MethodPost,
+		fmt.Sprintf("/api/v1/channels/%d/tokens", channel.ID), token,
+		createTokenRequest{Name: "sonarr"}))
+
+	// A window covering the whole day, so the test does not depend on the
+	// hour it runs at.
+	if r := call(t, server, http.MethodPut,
+		fmt.Sprintf("/api/v1/channels/%d/quiet-hours", channel.ID), token,
+		quietHoursPayload{From: "00:00", To: "23:59"}); r.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", r.Code, r.Body)
+	}
+
+	conn := dial(t, httpServer.URL, token, 0)
+	readUntil(t, conn, frameReady)
+
+	publish(t, server, "notifications", publishToken.Token, "a movie",
+		map[string]string{"Title": "Sonarr", "Priority": "5"})
+
+	frame := readUntil(t, conn, eventMessageNew)
+	var payload messagePayload
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Priority != store.PriorityMin {
+		t.Fatalf("the message should arrive silent: priority %d", payload.Priority)
+	}
+	if payload.Title != "Sonarr" {
+		t.Fatalf("the message itself does not change: %+v", payload)
+	}
+
+	// What is recorded keeps the published priority: the window changes how
+	// the message arrives, not what it is.
+	stored := decode[[]messagePayload](t, call(t, server, http.MethodGet,
+		"/api/v1/messages", token, nil))
+	if len(stored) != 1 || stored[0].Priority != 5 {
+		t.Fatalf("recorded priority = %+v", stored)
+	}
+}
+
+// A critical alert never falls silent: if it could wait until morning, it
+// should not have been critical.
+func TestQuietHoursNeverSilenceACritical(t *testing.T) {
+	httpServer, server, token := liveServer(t)
+
+	channel := decode[channelPayload](t, call(t, server, http.MethodPost, "/api/v1/channels",
+		token, createChannelRequest{Slug: "alerts", Name: "Alerts"}))
+	publishToken := decode[publishTokenPayload](t, call(t, server, http.MethodPost,
+		fmt.Sprintf("/api/v1/channels/%d/tokens", channel.ID), token,
+		createTokenRequest{Name: "alertmanager"}))
+	if r := call(t, server, http.MethodPut,
+		fmt.Sprintf("/api/v1/channels/%d/quiet-hours", channel.ID), token,
+		quietHoursPayload{From: "00:00", To: "23:59"}); r.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", r.Code, r.Body)
+	}
+
+	conn := dial(t, httpServer.URL, token, 0)
+	readUntil(t, conn, frameReady)
+
+	webhook(t, server, "alerts", publishToken.Token, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("c", "critical")}})
+
+	frame := readUntil(t, conn, eventMessageNew)
+	var critical messagePayload
+	if err := json.Unmarshal(frame.Payload, &critical); err != nil {
+		t.Fatal(err)
+	}
+	if critical.Priority != store.PriorityMax {
+		t.Fatalf("a critical must ring despite the window: %+v", critical)
+	}
+
+	// A warning, on the other hand, does fall silent.
+	webhook(t, server, "alerts", publishToken.Token, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("w", "warning")}})
+	frame = readUntil(t, conn, eventMessageNew)
+	var warning messagePayload
+	if err := json.Unmarshal(frame.Payload, &warning); err != nil {
+		t.Fatal(err)
+	}
+	if warning.Priority != store.PriorityMin {
+		t.Fatalf("a warning should arrive silent: %+v", warning)
 	}
 }

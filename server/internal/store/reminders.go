@@ -14,10 +14,6 @@ type ReminderPolicy struct {
 	ChannelID *int64
 	Severity  string
 	Interval  time.Duration
-	// QuietFrom and QuietTo bound a window, as "HH:MM" in local time. Empty
-	// means no quiet hours.
-	QuietFrom string
-	QuietTo   string
 	Enabled   bool
 }
 
@@ -29,13 +25,11 @@ func (p ReminderPolicy) Reminds() bool { return p.Enabled && p.Interval > 0 }
 //
 // Pushed and not dropped: an alert nobody acknowledged must resurface when
 // the quiet hours end. Silently skipping the reminder would turn a night
-// setting into a way of losing an alert.
-func (p ReminderPolicy) NextAfter(from time.Time) time.Time {
+// setting into a way of losing an alert — which is the difference between
+// quiet hours and a mute.
+func (p ReminderPolicy) NextAfter(from time.Time, quiet QuietHours) time.Time {
 	next := from.Add(p.Interval)
-	if p.QuietFrom == "" || p.QuietTo == "" {
-		return next
-	}
-	if end, inside := quietWindowEnd(next, p.QuietFrom, p.QuietTo); inside {
+	if end, inside := quiet.EndAfter(next); inside {
 		return end
 	}
 	return next
@@ -96,16 +90,12 @@ func (s *Store) SetReminderPolicy(policy ReminderPolicy) error {
 		return fmt.Errorf("a policy applies to a severity")
 	}
 	if _, err := s.db.Exec(
-		`INSERT INTO reminder_policies (channel_id, severity, interval_seconds,
-		                                quiet_from, quiet_to, enabled)
-		 VALUES (?, ?, ?, ?, ?, ?)
+		`INSERT INTO reminder_policies (channel_id, severity, interval_seconds, enabled)
+		 VALUES (?, ?, ?, ?)
 		 ON CONFLICT (IFNULL(channel_id, -1), severity) DO UPDATE SET
 		   interval_seconds = excluded.interval_seconds,
-		   quiet_from = excluded.quiet_from,
-		   quiet_to = excluded.quiet_to,
 		   enabled = excluded.enabled`,
 		policy.ChannelID, policy.Severity, int(policy.Interval.Seconds()),
-		nullable(policy.QuietFrom), nullable(policy.QuietTo),
 		boolToInt(policy.Enabled)); err != nil {
 		return fmt.Errorf("recording the policy: %w", err)
 	}
@@ -119,22 +109,19 @@ func (s *Store) ReminderPolicyFor(channelID int64, severity string) (ReminderPol
 	// ORDER BY puts the channel-specific row first, so LIMIT 1 implements
 	// "the most specific wins" without a second query.
 	row := s.db.QueryRow(
-		`SELECT id, channel_id, severity, interval_seconds, quiet_from, quiet_to, enabled
+		`SELECT id, channel_id, severity, interval_seconds, enabled
 		   FROM reminder_policies
 		  WHERE severity = ? AND (channel_id = ? OR channel_id IS NULL)
 		  ORDER BY channel_id IS NULL
 		  LIMIT 1`, severity, channelID)
 
 	var (
-		policy    ReminderPolicy
-		channel   sql.NullInt64
-		seconds   int
-		quietFrom sql.NullString
-		quietTo   sql.NullString
-		enabled   int
+		policy  ReminderPolicy
+		channel sql.NullInt64
+		seconds int
+		enabled int
 	)
-	err := row.Scan(&policy.ID, &channel, &policy.Severity, &seconds,
-		&quietFrom, &quietTo, &enabled)
+	err := row.Scan(&policy.ID, &channel, &policy.Severity, &seconds, &enabled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ReminderPolicy{}, ErrNotFound
 	}
@@ -147,8 +134,6 @@ func (s *Store) ReminderPolicyFor(channelID int64, severity string) (ReminderPol
 		policy.ChannelID = &value
 	}
 	policy.Interval = time.Duration(seconds) * time.Second
-	policy.QuietFrom = nullString(quietFrom)
-	policy.QuietTo = nullString(quietTo)
 	policy.Enabled = enabled == 1
 
 	return policy, nil
@@ -158,7 +143,7 @@ func (s *Store) ReminderPolicyFor(channelID int64, severity string) (ReminderPol
 // overrides and the defaults.
 func (s *Store) ReminderPoliciesOf(channelID int64) ([]ReminderPolicy, error) {
 	rows, err := s.db.Query(
-		`SELECT id, channel_id, severity, interval_seconds, quiet_from, quiet_to, enabled
+		`SELECT id, channel_id, severity, interval_seconds, enabled
 		   FROM reminder_policies
 		  WHERE channel_id = ? OR channel_id IS NULL
 		  ORDER BY channel_id IS NULL, severity`, channelID)
@@ -170,15 +155,13 @@ func (s *Store) ReminderPoliciesOf(channelID int64) ([]ReminderPolicy, error) {
 	policies := []ReminderPolicy{}
 	for rows.Next() {
 		var (
-			policy    ReminderPolicy
-			channel   sql.NullInt64
-			seconds   int
-			quietFrom sql.NullString
-			quietTo   sql.NullString
-			enabled   int
+			policy  ReminderPolicy
+			channel sql.NullInt64
+			seconds int
+			enabled int
 		)
 		if err := rows.Scan(&policy.ID, &channel, &policy.Severity, &seconds,
-			&quietFrom, &quietTo, &enabled); err != nil {
+			&enabled); err != nil {
 			return nil, fmt.Errorf("reading a policy: %w", err)
 		}
 		if channel.Valid {
@@ -186,8 +169,6 @@ func (s *Store) ReminderPoliciesOf(channelID int64) ([]ReminderPolicy, error) {
 			policy.ChannelID = &value
 		}
 		policy.Interval = time.Duration(seconds) * time.Second
-		policy.QuietFrom = nullString(quietFrom)
-		policy.QuietTo = nullString(quietTo)
 		policy.Enabled = enabled == 1
 		policies = append(policies, policy)
 	}

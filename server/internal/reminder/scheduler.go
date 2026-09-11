@@ -106,7 +106,12 @@ func (s *Scheduler) remind(alert store.Alert, now time.Time) {
 		// system must never produce.
 	}
 
-	next := policy.NextAfter(now)
+	// The quiet window pushes the next reminder out; it does not cancel it.
+	quiet, err := s.store.QuietHoursFor(alert.ChannelID, alert.Severity)
+	if err != nil {
+		s.logger.Error("reading the quiet hours", "error", err, "alert_id", alert.ID)
+	}
+	next := policy.NextAfter(now, quiet)
 	if err := s.store.SetNextReminder(alert.ID, &next, count); err != nil {
 		s.logger.Error("rescheduling the reminder", "error", err, "alert_id", alert.ID)
 	}

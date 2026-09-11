@@ -225,7 +225,42 @@ func toMessagePayload(message store.Message, slug string) messagePayload {
 // no live socket must still appear in the timeline, since "queued but never
 // sent" is exactly the miss the reliability figure is looking for.
 func (s *Server) publishMessage(channel store.Channel, message store.Message) {
-	s.publishMessagePayload(channel, message, toMessagePayload(message, channel.Slug))
+	payload := toMessagePayload(message, channel.Slug)
+	payload.Priority = s.deliveryPriority(channel, message, "", payload.Priority)
+	s.publishMessagePayload(channel, message, payload)
+}
+
+// deliveryPriority applies the channel's quiet hours to what the phone
+// receives.
+//
+// The priority is lowered on the way out and not in the record: the quiet
+// hours change how a message arrives, not what it is, and reading it back
+// tomorrow must still show the priority it was published with.
+//
+// Silenced and not postponed. A notification held until morning would land
+// out of order in a feed whose unread state already keeps it for then, and an
+// alert held until morning is an alert lost. What the window buys is the
+// phone staying quiet; everything still arrives.
+//
+// A critical alert is never silenced. Quiet hours are for what can wait until
+// morning, and if a critical could wait it should not have been critical.
+func (s *Server) deliveryPriority(
+	channel store.Channel, message store.Message, severity string, priority int,
+) int {
+	if severity == "critical" {
+		return priority
+	}
+	quiet, err := s.store.QuietHoursFor(channel.ID, severity)
+	if err != nil {
+		s.logger.Error("reading the quiet hours", "error", err, "channel_id", channel.ID)
+		return priority
+	}
+	if !quiet.Covers(time.Now()) {
+		return priority
+	}
+	s.logger.Info("delivered silently", "channel", channel.Slug,
+		"message_id", message.ID, "severity", severity)
+	return store.PriorityMin
 }
 
 // publishMessagePayload is the same fanout with a payload the caller owns —

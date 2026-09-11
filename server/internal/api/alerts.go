@@ -207,7 +207,9 @@ func (s *Server) announceAlert(channel store.Channel, alert store.Alert, kind st
 		return
 	}
 
-	s.publishMessage(channel, message)
+	payload := toMessagePayload(message, channel.Slug)
+	payload.Priority = s.deliveryPriority(channel, message, alert.Severity, priority)
+	s.publishMessagePayload(channel, message, payload)
 	s.publishToChannel(channel.ID, kind, toAlertPayload(alert, channel.Slug))
 }
 
@@ -384,7 +386,8 @@ func (s *Server) rearmReminder(alert store.Alert) {
 	if err != nil || !policy.Reminds() {
 		return
 	}
-	next := policy.NextAfter(time.Now().UTC())
+	quiet, _ := s.store.QuietHoursFor(alert.ChannelID, alert.Severity)
+	next := policy.NextAfter(time.Now().UTC(), quiet)
 	if err := s.store.SetNextReminder(alert.ID, &next, alert.ReminderCount); err != nil {
 		s.logger.Error("rearming the reminder", "error", err, "alert_id", alert.ID)
 	}
@@ -433,6 +436,7 @@ func (s *Server) RemindAlert(alert store.Alert, count int) error {
 		"channel", channel.Slug)
 	payload := toMessagePayload(message, channel.Slug)
 	payload.ReminderCount = count
+	payload.Priority = s.deliveryPriority(channel, message, alert.Severity, payload.Priority)
 	s.publishMessagePayload(channel, message, payload)
 	return nil
 }
@@ -445,7 +449,8 @@ func (s *Server) scheduleFirstReminder(alert store.Alert) {
 	if err != nil || !policy.Reminds() {
 		return
 	}
-	next := policy.NextAfter(time.Now().UTC())
+	quiet, _ := s.store.QuietHoursFor(alert.ChannelID, alert.Severity)
+	next := policy.NextAfter(time.Now().UTC(), quiet)
 	if err := s.store.SetNextReminder(alert.ID, &next, 0); err != nil {
 		s.logger.Error("scheduling the first reminder", "error", err, "alert_id", alert.ID)
 	}

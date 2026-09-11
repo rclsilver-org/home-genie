@@ -88,28 +88,26 @@ func TestSetPolicyReplacesRatherThanDuplicates(t *testing.T) {
 // Quiet hours postpone, they do not drop: an alert nobody has
 // acknowledged must resurface when the window closes.
 func TestQuietHoursPostponeRatherThanDrop(t *testing.T) {
-	nuit := ReminderPolicy{
-		Severity: "warning", Interval: 30 * time.Minute, Enabled: true,
-		QuietFrom: "23:00", QuietTo: "07:00",
-	}
+	nuit := ReminderPolicy{Severity: "warning", Interval: 30 * time.Minute, Enabled: true}
+	fenetre := QuietHours{Severity: "warning", From: "23:00", To: "07:00"}
 
 	// A reminder falling at 02:30: pushed to 07:00 the same day.
 	at := time.Date(2026, 9, 10, 2, 0, 0, 0, time.UTC)
-	next := nuit.NextAfter(at)
+	next := nuit.NextAfter(at, fenetre)
 	if next.Hour() != 7 || next.Minute() != 0 || next.Day() != 10 {
 		t.Fatalf("next = %s, want the 10th at 07:00", next)
 	}
 
 	// A reminder falling at 23:30: pushed to 07:00 the next day.
 	at = time.Date(2026, 9, 10, 23, 0, 0, 0, time.UTC)
-	next = nuit.NextAfter(at)
+	next = nuit.NextAfter(at, fenetre)
 	if next.Hour() != 7 || next.Day() != 11 {
 		t.Fatalf("next = %s, want the 11th at 07:00", next)
 	}
 
 	// In the middle of the day, the window does not interfere.
 	at = time.Date(2026, 9, 10, 14, 0, 0, 0, time.UTC)
-	next = nuit.NextAfter(at)
+	next = nuit.NextAfter(at, fenetre)
 	if !next.Equal(at.Add(30 * time.Minute)) {
 		t.Fatalf("next = %s, want 14:30", next)
 	}
@@ -117,30 +115,26 @@ func TestQuietHoursPostponeRatherThanDrop(t *testing.T) {
 
 // A window inside the day must not behave like a night.
 func TestQuietWindowWithinTheDay(t *testing.T) {
-	reunion := ReminderPolicy{
-		Severity: "info", Interval: 10 * time.Minute, Enabled: true,
-		QuietFrom: "09:00", QuietTo: "12:00",
-	}
+	reunion := ReminderPolicy{Severity: "info", Interval: 10 * time.Minute, Enabled: true}
+	fenetre := QuietHours{Severity: "info", From: "09:00", To: "12:00"}
 
 	at := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
-	if next := reunion.NextAfter(at); next.Hour() != 12 {
+	if next := reunion.NextAfter(at, fenetre); next.Hour() != 12 {
 		t.Fatalf("next = %s, want 12:00", next)
 	}
 
 	at = time.Date(2026, 9, 10, 13, 0, 0, 0, time.UTC)
-	if next := reunion.NextAfter(at); next.Hour() != 13 || next.Minute() != 10 {
+	if next := reunion.NextAfter(at, fenetre); next.Hour() != 13 || next.Minute() != 10 {
 		t.Fatalf("next = %s, want 13:10", next)
 	}
 }
 
 func TestMalformedQuietHoursAreIgnored(t *testing.T) {
-	policy := ReminderPolicy{
-		Severity: "warning", Interval: time.Hour, Enabled: true,
-		QuietFrom: "anything at all", QuietTo: "07:00",
-	}
+	policy := ReminderPolicy{Severity: "warning", Interval: time.Hour, Enabled: true}
+	unreadable := QuietHours{From: "anything at all", To: "07:00"}
 	at := time.Date(2026, 9, 10, 2, 0, 0, 0, time.UTC)
-	if next := policy.NextAfter(at); !next.Equal(at.Add(time.Hour)) {
-		t.Fatalf("next = %s — an unreadable window must not shift it", next)
+	if next := policy.NextAfter(at, unreadable); !next.Equal(at.Add(time.Hour)) {
+		t.Fatalf("next = %s — an unreadable window must not shift anything", next)
 	}
 }
 
