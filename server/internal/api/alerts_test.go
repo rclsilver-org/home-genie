@@ -554,3 +554,76 @@ func TestClosedFilterListsHistoryMostRecentlyResolvedFirst(t *testing.T) {
 			closed[1].Fingerprint)
 	}
 }
+
+// Un-acknowledging returns the alert to its original state: nobody has taken
+// the reminders start again — otherwise a gesture made by mistake can only
+// be undone by waiting for a reminder the acknowledgement just removed.
+func TestUnackPutsTheAlertBackOnItsCadence(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	channel, publishToken := issueChannelAndToken(t, repository, "alerts-critical")
+	token := session(t, server, "thomas", testPassword)
+
+	call(t, server, http.MethodPut,
+		fmt.Sprintf("/api/v1/channels/%d/reminders", channel.ID), token,
+		reminderPolicyPayload{Severity: "critical", IntervalSeconds: 300, Enabled: true})
+
+	webhook(t, server, "alerts-critical", publishToken, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("a", "critical")}})
+
+	alerts := decode[[]alertPayload](t, call(t, server, http.MethodGet,
+		"/api/v1/alerts", token, nil))
+	if len(alerts) != 1 {
+		t.Fatalf("one alert expected, got %+v", alerts)
+	}
+	id := alerts[0].ID
+
+	acked := decode[alertPayload](t, call(t, server, http.MethodPost,
+		fmt.Sprintf("/api/v1/alerts/%d/ack", id), token, nil))
+	if acked.AckedAt == nil {
+		t.Fatal("the alert should be acknowledged")
+	}
+	if stored, err := repository.AlertByID(id); err != nil || stored.NextReminderAt != nil {
+		t.Fatalf("acknowledging must cancel the reminder, got %+v", stored.NextReminderAt)
+	}
+
+	back := decode[alertPayload](t, call(t, server, http.MethodDelete,
+		fmt.Sprintf("/api/v1/alerts/%d/ack", id), token, nil))
+	if back.AckedAt != nil || back.AckedBy != "" {
+		t.Fatalf("the alert should be back to unacknowledged: %+v", back)
+	}
+
+	stored, err := repository.AlertByID(id)
+	if err != nil {
+		t.Fatalf("reading it back: %v", err)
+	}
+	if stored.NextReminderAt == nil {
+		t.Fatal("the reminders should start again")
+	}
+
+	// It joins again the set that demands an action.
+	unacked := decode[[]alertPayload](t, call(t, server, http.MethodGet,
+		"/api/v1/alerts?unacked=1", token, nil))
+	if len(unacked) != 1 || unacked[0].ID != id {
+		t.Fatalf("the alert should need action again: %+v", unacked)
+	}
+}
+
+// Un-acknowledging what was never acknowledged must announce nothing.
+func TestUnackOfAnUnackedAlertIsQuiet(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	_, publishToken := issueChannelAndToken(t, repository, "alerts-critical")
+	token := session(t, server, "thomas", testPassword)
+
+	webhook(t, server, "alerts-critical", publishToken, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("a", "critical")}})
+	alerts := decode[[]alertPayload](t, call(t, server, http.MethodGet,
+		"/api/v1/alerts", token, nil))
+
+	response := call(t, server, http.MethodDelete,
+		fmt.Sprintf("/api/v1/alerts/%d/ack", alerts[0].ID), token, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("code %d", response.Code)
+	}
+}

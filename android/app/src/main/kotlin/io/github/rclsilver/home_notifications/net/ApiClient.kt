@@ -134,6 +134,29 @@ suspend fun ackAlert(serverUrl: String, token: String, alertId: Long): Result<Un
         }
     }
 
+/**
+ * Removes an alert's acknowledgement and starts its reminders again.
+ *
+ * The gesture is made half asleep, on the wrong alert about as often as on
+ * the right one; without a way back, one would have to wait for a reminder
+ * the acknowledgement has just removed.
+ */
+suspend fun unackAlert(serverUrl: String, token: String, alertId: Long): Result<Unit> =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val call = ApiClient.defaultClient().newCall(
+                Request.Builder()
+                    .url("${serverUrl.trimEnd('/')}/api/v1/alerts/$alertId/ack")
+                    .delete()
+                    .header("Authorization", "Bearer $token")
+                    .build()
+            )
+            call.execute().use { response ->
+                if (!response.isSuccessful) throw IOException("HTTP error ${response.code}")
+            }
+        }
+    }
+
 /** A channel's feed, newest first. */
 suspend fun fetchMessages(serverUrl: String, token: String, channelId: Long, limit: Int = 50):
     Result<List<MessagePayload>> = withContext(Dispatchers.IO) {

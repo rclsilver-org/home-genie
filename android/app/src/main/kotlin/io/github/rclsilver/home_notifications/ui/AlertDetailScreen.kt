@@ -29,6 +29,7 @@ import io.github.rclsilver.home_notifications.net.AlertDetailPayload
 import io.github.rclsilver.home_notifications.net.AlertLogEntryPayload
 import io.github.rclsilver.home_notifications.net.ackAlert
 import io.github.rclsilver.home_notifications.net.fetchAlertDetail
+import io.github.rclsilver.home_notifications.net.unackAlert
 import io.github.rclsilver.home_notifications.service.ConnectionService
 
 /**
@@ -81,9 +82,16 @@ fun AlertDetailScreen(serverUrl: String, token: String, alertId: Long, onBack: (
 
     Text(alert.title, style = MaterialTheme.typography.titleLarge)
 
-    if (alert.isOpen && !alert.isAcked) {
-        Button(onClick = { scope.launch { ackAlert(serverUrl, token, alert.id).onSuccess { reloads++ } } }) {
-            Text("Acknowledge")
+    if (alert.isOpen) {
+        if (alert.isAcked) {
+            // Hand the alert back to nobody: it resumes its reminder cadence.
+            TextButton(onClick = {
+                scope.launch { unackAlert(serverUrl, token, alert.id).onSuccess { reloads++ } }
+            }) { Text("Un-acknowledge") }
+        } else {
+            Button(onClick = {
+                scope.launch { ackAlert(serverUrl, token, alert.id).onSuccess { reloads++ } }
+            }) { Text("Acknowledge") }
         }
     }
 

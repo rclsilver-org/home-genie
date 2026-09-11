@@ -29,6 +29,7 @@ import kotlinx.coroutines.launch
 import io.github.rclsilver.home_notifications.net.AlertPayload
 import io.github.rclsilver.home_notifications.net.ackAlert
 import io.github.rclsilver.home_notifications.net.fetchAlertsFiltered
+import io.github.rclsilver.home_notifications.net.unackAlert
 import io.github.rclsilver.home_notifications.service.ConnectionService
 
 /**
@@ -113,12 +114,20 @@ fun AlertsScreen(serverUrl: String, token: String, onOpen: (AlertPayload) -> Uni
             onAck = {
                 scope.launch { ackAlert(serverUrl, token, alert.id).onSuccess { reloads++ } }
             },
+            onUnack = {
+                scope.launch { unackAlert(serverUrl, token, alert.id).onSuccess { reloads++ } }
+            },
         )
     }
 }
 
 @Composable
-private fun AlertRow(alert: AlertPayload, onOpen: () -> Unit, onAck: () -> Unit) {
+private fun AlertRow(
+    alert: AlertPayload,
+    onOpen: () -> Unit,
+    onAck: () -> Unit,
+    onUnack: () -> Unit,
+) {
     // The background only shouts for what demands an action: an alert taken
     // or resolved goes back to neutral, or the screen is red permanently and
     // signals nothing at all.
@@ -163,8 +172,12 @@ private fun AlertRow(alert: AlertPayload, onOpen: () -> Unit, onAck: () -> Unit)
                 style = MaterialTheme.typography.bodySmall,
             )
 
-            if (alert.isOpen && !alert.isAcked) {
-                TextButton(onClick = onAck) { Text("Acknowledge") }
+            if (alert.isOpen) {
+                if (alert.isAcked) {
+                    TextButton(onClick = onUnack) { Text("Un-acknowledge") }
+                } else {
+                    TextButton(onClick = onAck) { Text("Acknowledge") }
+                }
             }
         }
     }

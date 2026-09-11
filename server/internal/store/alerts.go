@@ -457,3 +457,18 @@ func orUnknown(value string) string {
 	}
 	return value
 }
+
+// UnackAlert takes an acknowledgement back. Reporting whether anything
+// changed lets the caller stay quiet about an alert that was not
+// acknowledged to begin with, rather than announcing an event that did not
+// happen.
+func (s *Store) UnackAlert(id int64) (bool, error) {
+	result, err := s.db.Exec(
+		`UPDATE alerts SET acked_by = NULL, acked_at = NULL
+		  WHERE id = ? AND acked_at IS NOT NULL`, id)
+	if err != nil {
+		return false, fmt.Errorf("taking the acknowledgement back: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+	return affected > 0, nil
+}

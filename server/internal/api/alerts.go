@@ -17,6 +17,7 @@ const (
 	eventAlertOpened   = "alert.opened"
 	eventAlertResolved = "alert.resolved"
 	eventAlertAcked    = "alert.acked"
+	eventAlertUnacked  = "alert.unacked"
 )
 
 // alertmanagerWebhook is Alertmanager's v4 payload. Only what carries
@@ -331,6 +332,63 @@ func (s *Server) handleAckAlert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, toAlertPayload(updated, ""))
+}
+
+// handleUnackAlert takes an acknowledgement back. Acknowledging is the
+// gesture made half asleep, on the wrong alert as often as on the right one;
+// without a way back it would have to be corrected by waiting for the next
+// reminder, which is precisely what the acknowledgement stopped.
+func (s *Server) handleUnackAlert(w http.ResponseWriter, r *http.Request) {
+	user, _ := UserFrom(r.Context())
+
+	alert, channel, ok := s.alertForMember(w, r)
+	if !ok {
+		return
+	}
+
+	changed, err := s.store.UnackAlert(alert.ID)
+	if err != nil {
+		s.logger.Error("taking the acknowledgement back", "error", err, "alert_id", alert.ID)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// The cadence starts again where it stopped, and only for an alert still
+	// firing: a resolved one has nothing left to remind anybody about. The
+	// count is not reset, so the next reminder reads "Rappel 4" and not
+	// "Rappel 1" — the numbering is the history of what this alert cost in
+	// interruptions, not a counter of the current attempt.
+	if changed && alert.Status == store.AlertFiring {
+		s.rearmReminder(alert)
+	}
+
+	updated, err := s.store.AlertByID(alert.ID)
+	if err != nil {
+		s.logger.Error("rereading the alert", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	if changed {
+		s.logger.Info("alert acknowledgement withdrawn", "alert_id", alert.ID,
+			"by", user.Username)
+		s.publishToChannel(alert.ChannelID, eventAlertUnacked,
+			toAlertPayload(updated, channel.Slug))
+	}
+
+	s.writeJSON(w, http.StatusOK, toAlertPayload(updated, channel.Slug))
+}
+
+// rearmReminder puts an alert back on its cadence, keeping the count.
+func (s *Server) rearmReminder(alert store.Alert) {
+	policy, err := s.store.ReminderPolicyFor(alert.ChannelID, alert.Severity)
+	if err != nil || !policy.Reminds() {
+		return
+	}
+	next := policy.NextAfter(time.Now().UTC())
+	if err := s.store.SetNextReminder(alert.ID, &next, alert.ReminderCount); err != nil {
+		s.logger.Error("rearming the reminder", "error", err, "alert_id", alert.ID)
+	}
 }
 
 func toAlertPayload(alert store.Alert, slug string) alertPayload {
