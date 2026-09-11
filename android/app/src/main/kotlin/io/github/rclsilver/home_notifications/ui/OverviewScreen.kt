@@ -1,6 +1,5 @@
 package io.github.rclsilver.home_notifications.ui
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -132,30 +131,6 @@ fun OverviewScreen(
     // What needs a system setting shows here, where one looks first, and
     // nowhere at all when everything is in order.
     ReliabilityBanner(state)
-
-    if (open.isEmpty()) return
-
-    Text("The most recent", style = MaterialTheme.typography.titleMedium)
-    open.take(3).forEach { alert ->
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-            onClick = { onOpen(Destination.ALERTS) },
-        ) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    StatusBadge(alert)
-                    SeverityBadge(alert.severity)
-                    OccurrencesBadge(alert.occurrences)
-                }
-                Text(alert.title, style = MaterialTheme.typography.titleSmall)
-                Text(
-                    "${relativeAge(alert.startedAt)} · ${alert.channelSlug}",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-        }
-    }
 }
 
 @Composable
