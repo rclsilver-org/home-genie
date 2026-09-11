@@ -399,6 +399,7 @@ func (s *Server) handleListAllAlerts(w http.ResponseWriter, r *http.Request) {
 	query := store.AlertQuery{
 		OnlyOpen:    params.Get("open") == "1",
 		OnlyUnacked: params.Get("unacked") == "1",
+		OnlyClosed:  params.Get("closed") == "1",
 		Severity:    params.Get("severity"),
 	}
 	if raw := params.Get("limit"); raw != "" {

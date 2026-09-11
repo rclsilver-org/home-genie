@@ -34,14 +34,15 @@ import io.github.rclsilver.home_notifications.service.ConnectionService
 /**
  * The filters, in the order they are wanted.
  *
- * "Unacknowledged" comes first and not "Open": it is the only set that
- * demands an action, and therefore the one wanted when opening the
- * application at three in the morning.
+ * "Open" first, because that is the question one asks this screen: what is
+ * still running. The unacknowledged have no tab of their own — they are the
+ * ones that rise to the top of the open list, and one more tab for a subset
+ * already singled out would cost more than it returns.
  */
 private enum class AlertFilter(val label: String) {
-    UNACKED("Unacknowledged"),
     OPEN("Open"),
     CRITICAL("Critical"),
+    CLOSED("Closed"),
     ALL("All"),
 }
 
@@ -52,7 +53,7 @@ private enum class AlertFilter(val label: String) {
 @Composable
 fun AlertsScreen(serverUrl: String, token: String, onOpen: (AlertPayload) -> Unit) {
     val scope = rememberCoroutineScope()
-    var filter by remember { mutableStateOf(AlertFilter.UNACKED) }
+    var filter by remember { mutableStateOf(AlertFilter.OPEN) }
     var alerts by remember { mutableStateOf<List<AlertPayload>>(emptyList()) }
     var error by remember { mutableStateOf("") }
     var reloads by remember { mutableStateOf(0) }
@@ -62,7 +63,7 @@ fun AlertsScreen(serverUrl: String, token: String, onOpen: (AlertPayload) -> Uni
         fetchAlertsFiltered(
             serverUrl, token,
             openOnly = filter == AlertFilter.OPEN || filter == AlertFilter.CRITICAL,
-            unackedOnly = filter == AlertFilter.UNACKED,
+            closedOnly = filter == AlertFilter.CLOSED,
             severity = if (filter == AlertFilter.CRITICAL) "critical" else "",
         ).onSuccess { alerts = it; error = "" }
             .onFailure { error = it.message ?: "loading failed" }
@@ -88,9 +89,9 @@ fun AlertsScreen(serverUrl: String, token: String, onOpen: (AlertPayload) -> Uni
     if (alerts.isEmpty()) {
         Text(
             when (filter) {
-                AlertFilter.UNACKED -> "Nothing to deal with."
                 AlertFilter.OPEN -> "Nothing open."
                 AlertFilter.CRITICAL -> "No critical alert."
+                AlertFilter.CLOSED -> "Nothing closed."
                 AlertFilter.ALL -> "No alert."
             },
             style = MaterialTheme.typography.bodyLarge,
@@ -98,8 +99,14 @@ fun AlertsScreen(serverUrl: String, token: String, onOpen: (AlertPayload) -> Uni
         return
     }
 
-    // Unacknowledged first, then the open ones, then the resolved ones.
-    alerts.sortedWith(compareBy({ it.isAcked }, { !it.isOpen })).forEach { alert ->
+    // In the live views, what is unacknowledged rises: that is what is waiting
+    // for somebody. The history keeps the server's order, which sorts by
+    // resolution date — sorting it otherwise would erase exactly what one
+    // comes there to find.
+    val ordered =
+        if (filter == AlertFilter.CLOSED) alerts
+        else alerts.sortedWith(compareBy({ it.isAcked }, { !it.isOpen }))
+    ordered.forEach { alert ->
         AlertRow(
             alert = alert,
             onOpen = { onOpen(alert) },

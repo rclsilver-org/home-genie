@@ -361,12 +361,14 @@ suspend fun fetchAlertsFiltered(
     token: String,
     openOnly: Boolean = false,
     unackedOnly: Boolean = false,
+    closedOnly: Boolean = false,
     severity: String = "",
 ): Result<List<AlertPayload>> = withContext(Dispatchers.IO) {
     runCatching {
         val params = buildList {
             if (openOnly) add("open=1")
             if (unackedOnly) add("unacked=1")
+            if (closedOnly) add("closed=1")
             if (severity.isNotEmpty()) add("severity=$severity")
         }
         val suffix = if (params.isEmpty()) "" else "?" + params.joinToString("&")

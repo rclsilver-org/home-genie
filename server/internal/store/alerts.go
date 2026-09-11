@@ -210,6 +210,8 @@ type AlertQuery struct {
 	// OnlyUnacked is the set that actually demands an action: still firing
 	// and nobody has taken it.
 	OnlyUnacked bool
+	// OnlyClosed is the opposite view: what is over, read as history.
+	OnlyClosed bool
 	// Severity filters on the Alertmanager label, empty meaning any.
 	Severity string
 	Limit    int
@@ -329,6 +331,10 @@ func (s *Store) AlertsForUser(userID int64, query AlertQuery) ([]Alert, error) {
 	if query.OnlyUnacked {
 		conditions = append(conditions, "a.acked_at IS NULL")
 	}
+	if query.OnlyClosed {
+		conditions = append(conditions, "a.status = ?")
+		args = append(args, AlertResolved)
+	}
 	if query.Severity != "" {
 		conditions = append(conditions, "a.severity = ?")
 		args = append(args, query.Severity)
@@ -337,7 +343,14 @@ func (s *Store) AlertsForUser(userID int64, query AlertQuery) ([]Alert, error) {
 		sqlText += " WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	sqlText += ` ORDER BY a.started_at DESC, a.id DESC LIMIT ?`
+	// A closed list is history, and history reads from its end: what was
+	// resolved last is what one is looking for. Open alerts keep their own
+	// order, where the oldest untreated one is the one that matters.
+	if query.OnlyClosed {
+		sqlText += ` ORDER BY a.resolved_at DESC, a.id DESC LIMIT ?`
+	} else {
+		sqlText += ` ORDER BY a.started_at DESC, a.id DESC LIMIT ?`
+	}
 	args = append(args, query.Limit)
 
 	rows, err := s.db.Query(sqlText, args...)

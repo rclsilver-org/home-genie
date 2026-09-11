@@ -507,3 +507,50 @@ func TestAlertDetailRequiresMembership(t *testing.T) {
 		t.Fatalf("status = %d, want 404", r.Code)
 	}
 }
+
+// The "closed" tab is a history: it shows only what is over, and the alert
+// resolved last is the one being looked for first.
+func TestClosedFilterListsHistoryMostRecentlyResolvedFirst(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	_, publishToken := issueChannelAndToken(t, repository, "alerts-critical")
+
+	first := firing("previous", "critical")
+	second := firing("recente", "warning")
+	webhook(t, server, "alerts-critical", publishToken, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{first, second}})
+
+	// Still open: nothing to tell yet.
+	token := session(t, server, "thomas", testPassword)
+	closed := decode[[]alertPayload](t, call(t, server, http.MethodGet,
+		"/api/v1/alerts?closed=1", token, nil))
+	if len(closed) != 0 {
+		t.Fatalf("no alert should be closed, got %+v", closed)
+	}
+
+	// "recent" is recorded second but ends first: if the order followed the
+	// identifier rather than the resolution, it would wrongly come first.
+
+	second.Status = store.AlertResolved
+	second.EndsAt = "2026-09-10T21:00:00Z"
+	webhook(t, server, "alerts-critical", publishToken, alertmanagerWebhook{
+		Version: "4", Status: store.AlertResolved,
+		Alerts: []alertmanagerAlert{second}})
+	first.Status = store.AlertResolved
+	first.EndsAt = "2026-09-10T23:00:00Z"
+	webhook(t, server, "alerts-critical", publishToken, alertmanagerWebhook{
+		Version: "4", Status: store.AlertResolved,
+		Alerts: []alertmanagerAlert{first}})
+
+	closed = decode[[]alertPayload](t, call(t, server, http.MethodGet,
+		"/api/v1/alerts?closed=1", token, nil))
+	if len(closed) != 2 {
+		t.Fatalf("two closed alerts expected, got %+v", closed)
+	}
+	// "previous" ends after "recent": the resolution orders the list, not the
+	// identifier, or the last one recorded would always come first.
+	if closed[0].Fingerprint != "previous" {
+		t.Fatalf("unexpected order: %s before %s", closed[0].Fingerprint,
+			closed[1].Fingerprint)
+	}
+}
