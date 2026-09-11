@@ -4,14 +4,6 @@ import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.util.Log
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import io.github.rclsilver.home_notifications.data.Settings
-import io.github.rclsilver.home_notifications.net.ackAlert
-
-private const val TAG = "HomeGenie"
 
 /**
  * Acknowledges an alert from its notification.
@@ -39,27 +31,11 @@ class AckReceiver : BroadcastReceiver() {
             manager.cancel(tag, notificationId)
         }
 
-        val pending = goAsync()
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val settings = Settings(context.applicationContext)
-                val url = settings.serverUrlOnce()
-                val token = settings.tokenOnce()
-                if (url.isEmpty() || token.isEmpty()) return@launch
-
-                ackAlert(url, token, alertId)
-                    .onSuccess { Log.i(TAG, "alert $alertId acknowledged") }
-                    .onFailure {
-                        // A lost acknowledgement is far worse than a lost read:
-                        // the reminders would carry on. It is reported, and the
-                        // alert stays acknowledgeable from the application's
-                        // console.
-                        Log.w(TAG, "acknowledging $alertId failed", it)
-                    }
-            } finally {
-                pending.finish()
-            }
-        }
+        // The send goes through WorkManager rather than a receiver's ten
+        // seconds of reprieve: that one dies with the process, and a lost
+        // acknowledgement leaves the reminders running on an alert the user
+        // believes handled.
+        AckWorker.enqueue(context.applicationContext, alertId)
     }
 
     companion object {
