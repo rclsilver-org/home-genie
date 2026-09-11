@@ -152,7 +152,7 @@ Two shapes, like ntfy:
 ```sh
 curl -H "Authorization: Bearer hnp_…" \
      -H "Title: Sonarr" -H "Priority: high" -H "Tags: movie,download" \
-     -d "Dune has been downloaded" https://example.invalid/mediacenter
+     -d "Dune has been downloaded" https://example.invalid/notifications
 ```
 
 **JSON body** (`Content-Type: application/json`) with `title`, `message`, `priority`,
@@ -181,6 +181,15 @@ The Alertmanager webhook has its own section below.
 
 - `GET /api/v1/channels/{id}/messages?limit=&before_id=` *(implemented)* — a channel's
   feed, newest first, paginated backwards with `before_id`
+- `GET /api/v1/messages?unread=&limit=&before_id=` *(implemented)* — the notification
+  feed, across every channel. Alerts are **kept out of it server-side**: they have a
+  console of their own, a lifecycle that "read / unread" does not describe, and their
+  reminders would drown a view whose whole point is to empty itself
+- `GET /api/v1/messages/unread` *(implemented)* — what the view would show, counted
+  without sending it: a badge wants a number, not a list, and the list is capped where
+  the count must not be
+- `POST /api/v1/messages/read` *(implemented)* — empties the feed in one gesture, for
+  this user alone
 - `POST /api/v1/devices`
 
 The endpoints marked *(implemented)* above are available; the others land as step 1
@@ -217,16 +226,40 @@ The severity drives the priority: `critical` → 5, `warning` → 4, `info` → 
 → 3. A resolution goes out at priority 2 — good news arriving after having woken
 somebody up must not shout.
 
+### `GET /api/v1/alerts?open=&unacked=&closed=&severity=&limit=`
+
+The caller's alerts, **across every channel**: this is the application's console.
+`unacked=1` is the subset that demands an action; `closed=1` is the history, and it is
+ordered by resolution date — a story is read from its end, what one looks for there is
+what has just been resolved.
+
+### `GET /api/v1/alerts/{id}`
+
+The alert and its **timeline**, rebuilt from what is already recorded: opening,
+notifications, reminders, repeats, acknowledgement, resolution. No second log written
+in parallel — two recordings of the same events would end up diverging, and the one
+consulted at three in the morning must not be the one that drifted.
+
+`occurrences` counts the times Alertmanager re-delivered the same alert. Without it, a
+rule that has beaten forty times looks like a stable rule, and that difference is
+precisely what decides whether one goes back to sleep.
+
 ### `GET /api/v1/channels/{id}/alerts?open=1`
 
-The channel's alerts, `open=1` restricting to those still open: this is the console.
+The alerts of a single channel, `open=1` restricting to those still open.
 
-### `POST /api/v1/alerts/{id}/ack`
+### `POST /api/v1/alerts/{id}/ack` and `DELETE /api/v1/alerts/{id}/ack`
 
 **Purely local** acknowledgement. Nothing is written back to Alertmanager: the alert
 stays visible in the dashboards, and the phone never writes into the chain it watches.
 Acknowledging is not resolving — the alert stays `firing`, only its reminders stop.
 The author and the time are kept.
+
+The `DELETE` takes the acknowledgement back: the gesture is made half asleep, on the
+wrong alert about as often as on the right one, and with no way back one would have to
+wait for a reminder the acknowledgement has just removed. The alert resumes its
+cadence without resetting its reminder counter — the numbering is the story of what
+the alert has cost in interruptions.
 
 ## Reminders *(implemented)*
 
@@ -239,18 +272,13 @@ asked to.
 - `PUT /api/v1/channels/{id}/reminders` — `owner`; sets the channel's override
 
 ```json
-{ "severity": "critical", "interval_seconds": 900,
-  "quiet_from": "23:00", "quiet_to": "07:00", "enabled": true }
+{ "severity": "critical", "interval_seconds": 900, "enabled": true }
 ```
 
-**Quiet hours push back, they do not drop**: an unacknowledged alert resurfaces at the
-end of the window. Making the reminder disappear would turn a night setting into a way
-of losing an alert. The window may straddle midnight, which is the normal case. It is
-given whole or not at all: a half would silence at an unpredictable hour, so that is a
-`400`.
-
-Reminders are numbered in their title ("Reminder 2 — …"): a reminder identical to the
-original alert is indistinguishable from a duplicate, and gets swiped away as one.
+Reminders carry their rank **beside** the message (`reminder_count`) and not in the
+title: prefixing "Reminder 3 — " truncated the title on the lock screen, exactly where
+it has to be read at a glance. A reminder **replaces** the notification it repeats,
+rather than stacking one more per round.
 
 The scheduler **re-reads the database** every 15 s rather than holding timers in
 memory. Second-level precision is of no interest for a reminder; surviving a restart
@@ -259,6 +287,39 @@ server was updated at 4.
 
 A failed send reschedules all the same: making an alert mute over a transient failure
 is the one result an alerting system must never produce.
+
+## Quiet hours *(implemented)*
+
+A window belongs to the **channel**, optionally named by severity. The most specific
+wins, as with the cadences.
+
+- `GET /api/v1/channels/{id}/quiet-hours` — member
+- `PUT /api/v1/channels/{id}/quiet-hours` — `owner`; two empty bounds remove the
+  window, which is what an emptied form means
+
+```json
+{ "severity": "critical", "from": "23:00", "to": "07:00" }
+```
+
+The window **silences, it does not hold back**. At delivery the priority is lowered
+*on the way out* and not in the record: holding a message until morning would make it
+arrive out of order in a feed whose "unread" state already keeps it for the morning,
+and holding an alert back is losing it. Read again the next day, the message still
+carries the priority it was published with.
+
+For reminders, the window **pushes** to its end: an unacknowledged alert resurfaces,
+and making its reminder disappear would turn a night setting into a way of losing an
+alert.
+
+A window set on **the whole channel does not cover criticals**. Silencing them is
+legitimate on a homelab — a disk filling up at three in the morning can wait until
+seven — but it is asked for by naming `critical`, so that it is not inherited from a
+window meant for downloads. The broad gesture stays safe, the dangerous one stays
+deliberate.
+
+The window may straddle midnight, which is the normal case. It is given whole or not
+at all: a half would silence at an unpredictable hour, so that is a `400`.
+
 ## Reading and timeline *(implemented)*
 
 An information channel reads like **a shared RSS feed**: the message is single and
