@@ -1,5 +1,6 @@
 package io.github.rclsilver.home_notifications.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
@@ -246,6 +247,11 @@ private fun AlertRow(
                     )
                 },
             colors = CardDefaults.cardColors(containerColor = container),
+            // A line, the same colour on every row: it draws where the row
+            // ends, not one more signal. The state is read from the badge and
+            // the fill; a border changing along with them would only
+            // repeat it.
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
             onClick = { if (revealed) onReveal(false) else onOpen() },
         ) {
             Column(

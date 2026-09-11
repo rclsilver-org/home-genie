@@ -1,5 +1,6 @@
 package io.github.rclsilver.home_notifications.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -118,6 +119,7 @@ fun OverviewScreen(
     open.take(3).forEach { alert ->
         Card(
             modifier = Modifier.fillMaxWidth(),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
             onClick = { onOpen(Destination.ALERTS) },
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
