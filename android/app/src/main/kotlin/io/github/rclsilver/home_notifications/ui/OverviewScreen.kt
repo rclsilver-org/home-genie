@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import io.github.rclsilver.home_notifications.net.AlertPayload
 import io.github.rclsilver.home_notifications.net.fetchAlertsFiltered
 import io.github.rclsilver.home_notifications.service.ConnectionService
@@ -88,24 +89,43 @@ fun OverviewScreen(
         )
     }
 
-    // The connection in one line: it is what decides whether the absence of
-    // alerts means "nothing to report" or "nothing is getting through".
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                when {
-                    !state.running -> "Service stopped"
-                    state.connected -> "Connected"
-                    else -> "Reconnecting"
-                },
-                style = MaterialTheme.typography.titleSmall,
-            )
-            Text(
-                if (state.connected) "The alerts arrive live."
-                else "While the socket is down, nothing arrives — and the silence " +
-                    "looks like calm.",
-                style = MaterialTheme.typography.bodySmall,
-            )
+    // Nothing while the socket holds. A "Connected" line shown permanently
+    // stops being read after two days, and that is exactly the day it would
+    // say something else. So only the silence is spoken of: with no socket,
+    // no alert arrives, and the absence of alerts looks like calm.
+    //
+    // After a few seconds only: at launch the socket is not open yet, and
+    // announcing an outage while it is being established would be a
+    // one-second lie repeated on every opening.
+    val down = !state.running || !state.connected
+    var announce by remember { mutableStateOf(false) }
+    LaunchedEffect(down) {
+        if (!down) {
+            announce = false
+        } else {
+            delay(5_000)
+            announce = true
+        }
+    }
+
+    if (announce) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+            ),
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    if (!state.running) "Service stopped" else "Reconnecting",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    "While the socket is down nothing arrives — and the silence " +
+                        "looks like calm.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
     }
 
