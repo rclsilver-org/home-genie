@@ -1,0 +1,164 @@
+package io.github.rclsilver.home_notifications.ui
+
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
+import io.github.rclsilver.home_notifications.net.AlertPayload
+import io.github.rclsilver.home_notifications.net.ackAlert
+import io.github.rclsilver.home_notifications.net.fetchAlertsFiltered
+import io.github.rclsilver.home_notifications.service.ConnectionService
+
+/**
+ * The filters, in the order they are wanted.
+ *
+ * "Unacknowledged" comes first and not "Open": it is the only set that
+ * demands an action, and therefore the one wanted when opening the
+ * application at three in the morning.
+ */
+private enum class AlertFilter(val label: String) {
+    UNACKED("Unacknowledged"),
+    OPEN("Open"),
+    CRITICAL("Critical"),
+    ALL("All"),
+}
+
+/**
+ * The alert console — the home screen and the main function of the
+ * application: knowing what is open, who has taken it, and acknowledging it.
+ */
+@Composable
+fun AlertsScreen(serverUrl: String, token: String, onOpen: (AlertPayload) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var filter by remember { mutableStateOf(AlertFilter.UNACKED) }
+    var alerts by remember { mutableStateOf<List<AlertPayload>>(emptyList()) }
+    var error by remember { mutableStateOf("") }
+    var reloads by remember { mutableStateOf(0) }
+
+    val state by ConnectionService.observedState.collectAsState()
+    LaunchedEffect(filter, state.events, reloads) {
+        fetchAlertsFiltered(
+            serverUrl, token,
+            openOnly = filter == AlertFilter.OPEN || filter == AlertFilter.CRITICAL,
+            unackedOnly = filter == AlertFilter.UNACKED,
+            severity = if (filter == AlertFilter.CRITICAL) "critical" else "",
+        ).onSuccess { alerts = it; error = "" }
+            .onFailure { error = it.message ?: "loading failed" }
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        AlertFilter.entries.forEach { candidate ->
+            FilterChip(
+                selected = candidate == filter,
+                onClick = { filter = candidate },
+                label = { Text(candidate.label) },
+            )
+        }
+    }
+
+    if (error.isNotEmpty()) {
+        Text(error, color = MaterialTheme.colorScheme.error)
+    }
+
+    if (alerts.isEmpty()) {
+        Text(
+            when (filter) {
+                AlertFilter.UNACKED -> "Nothing to deal with."
+                AlertFilter.OPEN -> "Nothing open."
+                AlertFilter.CRITICAL -> "No critical alert."
+                AlertFilter.ALL -> "No alert."
+            },
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        return
+    }
+
+    // Unacknowledged first, then the open ones, then the resolved ones.
+    alerts.sortedWith(compareBy({ it.isAcked }, { !it.isOpen })).forEach { alert ->
+        AlertRow(
+            alert = alert,
+            onOpen = { onOpen(alert) },
+            onAck = {
+                scope.launch { ackAlert(serverUrl, token, alert.id).onSuccess { reloads++ } }
+            },
+        )
+    }
+}
+
+@Composable
+private fun AlertRow(alert: AlertPayload, onOpen: () -> Unit, onAck: () -> Unit) {
+    // The background only shouts for what demands an action: an alert taken
+    // or resolved goes back to neutral, or the screen is red permanently and
+    // signals nothing at all.
+    val container = when {
+        !alert.isOpen -> MaterialTheme.colorScheme.surfaceVariant
+        alert.isAcked -> MaterialTheme.colorScheme.surface
+        else -> MaterialTheme.colorScheme.errorContainer
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = container),
+        onClick = onOpen,
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                StatusBadge(alert)
+                SeverityBadge(alert.severity)
+                OccurrencesBadge(alert.occurrences)
+                Text("#${alert.id}", style = MaterialTheme.typography.labelSmall)
+            }
+
+            Text(
+                alert.title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = if (alert.isOpen && !alert.isAcked) FontWeight.Bold
+                else FontWeight.Normal,
+            )
+
+            Text(
+                buildString {
+                    append(relativeAge(alert.startedAt))
+                    append(" · ").append(alert.channelSlug)
+                    alert.labels["instance"]?.let { append(" · ").append(it) }
+                    // "nobody" rather than a blank: the absence of a taker is
+                    // the information, not a missing value.
+                    append(" · ").append(if (alert.isAcked) alert.ackedBy else "nobody")
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
+
+            if (alert.isOpen && !alert.isAcked) {
+                TextButton(onClick = onAck) { Text("Acknowledge") }
+            }
+        }
+    }
+}

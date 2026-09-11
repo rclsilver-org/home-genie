@@ -12,6 +12,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -63,6 +65,10 @@ fun AppScreen(settings: Settings) {
     // Navigation by plain state: two screens do not justify a library, and
     // the open channel must survive a recomposition but not the process.
     var openChannel by remember { mutableStateOf<ChannelPayload?>(null) }
+    // The open alert, if any: the console and the detail are the same tab,
+    // not two destinations.
+    var openAlert by remember { mutableStateOf<Long?>(null) }
+    var destination by remember { mutableStateOf(Destination.ALERTS) }
 
     // As soon as a session exists, the service must be running. Without this
     // an application update — which kills the service without START_STICKY
@@ -90,7 +96,23 @@ fun AppScreen(settings: Settings) {
                     token = token,
                     onBack = { openChannel = null },
                 )
-                else -> DiagnosticCard(settings) { openChannel = it }
+                else -> {
+                    // The alerts are the main function: they open by default,
+                    // the channels and the diagnostics come behind.
+                    Destinations(destination) { destination = it }
+                    when (destination) {
+                        Destination.ALERTS -> {
+                            val opened = openAlert
+                            if (opened == null) {
+                                AlertsScreen(serverUrl, token) { openAlert = it.id }
+                            } else {
+                                AlertDetailScreen(serverUrl, token, opened) { openAlert = null }
+                            }
+                        }
+                        Destination.CHANNELS -> ChannelsScreen(settings) { openChannel = it }
+                        Destination.DIAGNOSTIC -> DiagnosticCard(settings)
+                    }
+                }
             }
         }
     }
@@ -189,7 +211,7 @@ private fun LoginCard(settings: Settings) {
 }
 
 @Composable
-private fun DiagnosticCard(settings: Settings, onOpenChannel: (ChannelPayload) -> Unit) {
+private fun DiagnosticCard(settings: Settings) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val state by ConnectionService.observedState.collectAsState()
@@ -221,28 +243,9 @@ private fun DiagnosticCard(settings: Settings, onOpenChannel: (ChannelPayload) -
         OutlinedButton(onClick = { ConnectionService.stop(context) }) { Text("Stop") }
     }
 
-    Spacer(Modifier.height(8.dp))
-    ChannelsSection(settings, onOpenChannel)
 
-    Spacer(Modifier.height(8.dp))
-    Text("Reliability", style = MaterialTheme.typography.titleMedium)
+    ReliabilityBanner(state)
 
-    reliabilityChecks(context).forEach { check ->
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    (if (check.satisfied) "✓ " else "• ") + check.label,
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                Text(check.explanation, style = MaterialTheme.typography.bodySmall)
-                check.fix?.let { intent ->
-                    TextButton(onClick = { context.startActivity(intent()) }) {
-                        Text("Open the setting")
-                    }
-                }
-            }
-        }
-    }
 
     Spacer(Modifier.height(8.dp))
     TextButton(onClick = {
@@ -378,4 +381,79 @@ private fun NewChannelRow(onCreate: (String) -> Unit) {
             onClick = { onCreate(slug); slug = "" },
         ) { Text("Create") }
     }
+}
+
+/**
+ * Shows only what needs an action.
+ *
+ * Nothing when everything is in order: a screen that repeats instructions
+ * already followed teaches the reader to ignore it, and the warning that
+ * really matters — a system update that re-enables battery optimisation —
+ * would be lost in the noise.
+ */
+@Composable
+private fun ReliabilityBanner(state: ConnectionService.State) {
+    val context = LocalContext.current
+
+    // Symptom: the service claims to be running but nothing has arrived for a
+    // long while, or socket failures are piling up. That is what brings back
+    // the items no API can verify.
+    val stale = state.running && state.lastHeartbeat > 0 &&
+        System.currentTimeMillis() - state.lastHeartbeat > 5 * 60 * 1000
+    val symptom = stale || state.failures >= 3
+
+    val checks = pendingChecks(context, symptom)
+    if (checks.isEmpty()) return
+
+    Spacer(Modifier.height(8.dp))
+    Text("To do", style = MaterialTheme.typography.titleMedium)
+
+    checks.forEach { check ->
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+            ),
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(check.label, style = MaterialTheme.typography.titleSmall)
+                Text(check.explanation, style = MaterialTheme.typography.bodySmall)
+                check.fix?.let { intent ->
+                    TextButton(onClick = { context.startActivity(intent()) }) {
+                        Text("Open the setting")
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** The three views, in order of importance. */
+enum class Destination(val label: String) {
+    ALERTS("Alerts"),
+    CHANNELS("Canaux"),
+    DIAGNOSTIC("Diagnostic"),
+}
+
+@Composable
+private fun Destinations(current: Destination, onSelect: (Destination) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Destination.entries.forEach { destination ->
+            FilterChip(
+                selected = destination == current,
+                onClick = { onSelect(destination) },
+                label = { Text(destination.label) },
+            )
+        }
+    }
+}
+
+/** The channels: secondary to the alerts, but this is where one creates a
+ *  channel, issues a token and reads a feed. */
+@Composable
+private fun ChannelsScreen(settings: Settings, onOpenChannel: (ChannelPayload) -> Unit) {
+    ChannelsSection(settings, onOpenChannel)
 }

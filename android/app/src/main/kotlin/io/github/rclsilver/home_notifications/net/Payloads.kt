@@ -42,6 +42,9 @@ data class ChannelPayload(
 data class AlertPayload(
     val id: Long,
     @SerialName("channel_id") val channelId: Long,
+    // The home console mixes several channels: an alert without its origin
+    // is unusable there.
+    @SerialName("channel_slug") val channelSlug: String = "",
     val status: String = "",
     val severity: String = "",
     val title: String = "",
@@ -50,6 +53,11 @@ data class AlertPayload(
     @SerialName("started_at") val startedAt: String = "",
     @SerialName("acked_by") val ackedBy: String = "",
     @SerialName("acked_at") val ackedAt: String? = null,
+    // What tells an alert that beats from a stable one.
+    val occurrences: Int = 1,
+    @SerialName("reminder_count") val reminderCount: Int = 0,
+    val annotations: Map<String, String> = emptyMap(),
+    @SerialName("generator_url") val generatorUrl: String = "",
 ) {
     val isAcked: Boolean get() = ackedAt != null
     val isOpen: Boolean get() = status == "firing"
@@ -109,4 +117,18 @@ data class TimelineEntryPayload(
     val username: String = "",
     val device: String = "",
     val at: String = "",
+)
+
+/** An alert together with its journal. */
+@Serializable
+data class AlertDetailPayload(
+    val alert: AlertPayload,
+    val log: List<AlertLogEntryPayload> = emptyList(),
+)
+
+@Serializable
+data class AlertLogEntryPayload(
+    val at: String = "",
+    val kind: String = "",
+    val detail: String = "",
 )

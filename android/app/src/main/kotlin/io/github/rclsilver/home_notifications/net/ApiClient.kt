@@ -342,3 +342,48 @@ suspend fun fetchTimeline(serverUrl: String, token: String, messageId: Long):
         }
     }
 }
+
+/** All of the caller's alerts, across every channel. */
+suspend fun fetchAllAlerts(serverUrl: String, token: String, openOnly: Boolean):
+    Result<List<AlertPayload>> = withContext(Dispatchers.IO) {
+    runCatching {
+        val suffix = if (openOnly) "?open=1" else ""
+        get(serverUrl, token, "/api/v1/alerts$suffix") { text ->
+            Json { ignoreUnknownKeys = true }
+                .decodeFromString(ListSerializer(AlertPayload.serializer()), text)
+        }
+    }
+}
+
+/** The caller's alerts, filtered server-side. */
+suspend fun fetchAlertsFiltered(
+    serverUrl: String,
+    token: String,
+    openOnly: Boolean = false,
+    unackedOnly: Boolean = false,
+    severity: String = "",
+): Result<List<AlertPayload>> = withContext(Dispatchers.IO) {
+    runCatching {
+        val params = buildList {
+            if (openOnly) add("open=1")
+            if (unackedOnly) add("unacked=1")
+            if (severity.isNotEmpty()) add("severity=$severity")
+        }
+        val suffix = if (params.isEmpty()) "" else "?" + params.joinToString("&")
+        get(serverUrl, token, "/api/v1/alerts$suffix") { text ->
+            Json { ignoreUnknownKeys = true }
+                .decodeFromString(ListSerializer(AlertPayload.serializer()), text)
+        }
+    }
+}
+
+/** An alert and its timeline. */
+suspend fun fetchAlertDetail(serverUrl: String, token: String, alertId: Long):
+    Result<AlertDetailPayload> = withContext(Dispatchers.IO) {
+    runCatching {
+        get(serverUrl, token, "/api/v1/alerts/$alertId") { text ->
+            Json { ignoreUnknownKeys = true }
+                .decodeFromString(AlertDetailPayload.serializer(), text)
+        }
+    }
+}
