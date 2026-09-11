@@ -176,3 +176,10 @@ data class QuietHoursPayload(
     val from: String = "",
     val to: String = "",
 )
+
+/** An account offered by the completion. */
+@Serializable
+data class UserSuggestionPayload(
+    val username: String = "",
+    @SerialName("display_name") val displayName: String = "",
+)

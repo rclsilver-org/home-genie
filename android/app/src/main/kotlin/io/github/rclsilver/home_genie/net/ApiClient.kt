@@ -591,3 +591,15 @@ suspend fun deleteChannel(serverUrl: String, token: String, channelId: Long): Re
             }
         }
     }
+
+/** The accounts whose username or name contains [fragment]. */
+suspend fun searchUsers(serverUrl: String, token: String, fragment: String):
+    Result<List<UserSuggestionPayload>> = withContext(Dispatchers.IO) {
+    runCatching {
+        val query = java.net.URLEncoder.encode(fragment, "UTF-8")
+        get(serverUrl, token, "/api/v1/users?q=$query") { text ->
+            Json { ignoreUnknownKeys = true }
+                .decodeFromString(ListSerializer(UserSuggestionPayload.serializer()), text)
+        }
+    }
+}

@@ -324,3 +324,34 @@ func TestARevokedTokenCanThenBeDeleted(t *testing.T) {
 		t.Fatalf("status = %d, want 404", r.Code)
 	}
 }
+
+// Completion is there to pick a member rather than spell one: it matches on
+// the username as well as on the display name.
+func TestUserSearchMatchesBothNames(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	if _, err := repository.CreateLocalUser("claire", "Claire Dupont", "x", false); err != nil {
+		t.Fatal(err)
+	}
+	token := session(t, server, "thomas", testPassword)
+
+	byUsername := decode[[]userSuggestionPayload](t, call(t, server, http.MethodGet,
+		"/api/v1/users?q=clai", token, nil))
+	if len(byUsername) != 1 || byUsername[0].Username != "claire" {
+		t.Fatalf("search by username: %+v", byUsername)
+	}
+
+	byDisplayName := decode[[]userSuggestionPayload](t, call(t, server, http.MethodGet,
+		"/api/v1/users?q=Dupont", token, nil))
+	if len(byDisplayName) != 1 || byDisplayName[0].Username != "claire" {
+		t.Fatalf("search by display name: %+v", byDisplayName)
+	}
+
+	// With no fragment, everybody: that is the list one scrolls before typing
+	// anything at all.
+	all := decode[[]userSuggestionPayload](t, call(t, server, http.MethodGet,
+		"/api/v1/users", token, nil))
+	if len(all) != 2 {
+		t.Fatalf("two accounts expected: %+v", all)
+	}
+}

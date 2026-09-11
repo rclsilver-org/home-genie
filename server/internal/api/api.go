@@ -41,6 +41,8 @@ func (s *Server) Routes() *http.ServeMux {
 
 	mux.Handle("GET /api/v1/me", device(s.handleMe))
 
+	mux.Handle("GET /api/v1/users", device(s.handleSearchUsers))
+
 	mux.Handle("GET /api/v1/channels", device(s.handleListChannels))
 	mux.Handle("POST /api/v1/channels", device(s.handleCreateChannel))
 	mux.Handle("GET /api/v1/channels/{id}", device(s.handleGetChannel))

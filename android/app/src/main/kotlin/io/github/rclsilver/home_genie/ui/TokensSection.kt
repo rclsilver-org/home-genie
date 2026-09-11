@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -44,7 +45,6 @@ fun TokensSection(channelId: Long, channelSlug: String, serverUrl: String, token
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var tokens by remember { mutableStateOf<List<PublishTokenPayload>>(emptyList()) }
-    var newName by remember { mutableStateOf("") }
     // The cleartext value comes back only at creation: it stays on screen
     // until the user copies it, then it is lost for good.
     var issued by remember { mutableStateOf<PublishTokenPayload?>(null) }
@@ -135,31 +135,50 @@ fun TokensSection(channelId: Long, channelSlug: String, serverUrl: String, token
         }
     }
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        OutlinedTextField(
-            value = newName,
-            onValueChange = { newName = it },
-            label = { Text("Producer name") },
-            placeholder = { Text("sonarr") },
-            singleLine = true,
-            modifier = Modifier.weight(1f),
-        )
-        TextButton(
-            enabled = newName.isNotBlank(),
-            onClick = {
-                scope.launch {
-                    createPublishToken(serverUrl, token, channelId, newName.trim())
-                        .onSuccess { issued = it; newName = ""; reloads++ }
-                        .onFailure { error = it.message ?: "creation failed" }
+    var issuing by remember { mutableStateOf(false) }
+    TextButton(onClick = { issuing = true }) { Text("Issue a token") }
+
+    if (issuing) {
+        var newName by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { issuing = false },
+            title = { Text("Issue a token") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "One name per producer — that is what will let you cut this " +
+                            "one off without touching the others.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    OutlinedTextField(
+                        value = newName,
+                        onValueChange = { newName = it },
+                        label = { Text("Producer name") },
+                        placeholder = { Text("sonarr") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             },
-        ) { Text("Issue") }
+            confirmButton = {
+                TextButton(
+                    enabled = newName.isNotBlank(),
+                    onClick = {
+                        val name = newName.trim()
+                        issuing = false
+                        scope.launch {
+                            createPublishToken(serverUrl, token, channelId, name)
+                                .onSuccess { issued = it; reloads++; error = "" }
+                                .onFailure { error = it.message ?: "creation failed" }
+                        }
+                    },
+                ) { Text("Issue") }
+            },
+            dismissButton = { TextButton(onClick = { issuing = false }) { Text("Cancel") } },
+        )
     }
 }
+
 
 private fun copy(context: Context, text: String) {
     val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager

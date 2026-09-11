@@ -183,3 +183,38 @@ func (s *Store) UpdateUserProfile(id int64, username, displayName string) error 
 	}
 	return nil
 }
+
+// SearchUsers lists the accounts whose username or display name contains the
+// given fragment, so a channel owner can pick a member rather than spell one.
+//
+// Everyone is listed, members of the channel included: filtering them out
+// here would make the caller unable to tell an unknown name from one already
+// added, and the screen knows who its members are anyway.
+func (s *Store) SearchUsers(fragment string, limit int) ([]User, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	pattern := "%" + fragment + "%"
+	rows, err := s.db.Query(
+		`SELECT id, username, display_name, is_admin
+		   FROM users
+		  WHERE username LIKE ? OR display_name LIKE ?
+		  ORDER BY username
+		  LIMIT ?`, pattern, pattern, limit)
+	if err != nil {
+		return nil, fmt.Errorf("searching the users: %w", err)
+	}
+	defer rows.Close()
+
+	users := []User{}
+	for rows.Next() {
+		var user User
+		var admin int
+		if err := rows.Scan(&user.ID, &user.Username, &user.DisplayName, &admin); err != nil {
+			return nil, fmt.Errorf("reading a user: %w", err)
+		}
+		user.IsAdmin = admin == 1
+		users = append(users, user)
+	}
+	return users, rows.Err()
+}

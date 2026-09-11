@@ -75,3 +75,31 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 
 	s.writeJSON(w, http.StatusOK, payload)
 }
+
+type userSuggestionPayload struct {
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+}
+
+// handleSearchUsers backs the completion when adding a member.
+//
+// Any authenticated device may call it. The alternative — restricting it to
+// channel owners — would protect a list that anyone can already read from the
+// members of their own channels, at the cost of a screen that works for some
+// accounts and not others.
+func (s *Server) handleSearchUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := s.store.SearchUsers(r.URL.Query().Get("q"), 20)
+	if err != nil {
+		s.logger.Error("searching the users", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	payload := []userSuggestionPayload{}
+	for _, user := range users {
+		payload = append(payload, userSuggestionPayload{
+			Username: user.Username, DisplayName: user.DisplayName,
+		})
+	}
+	s.writeJSON(w, http.StatusOK, payload)
+}

@@ -88,6 +88,12 @@ Returns the caller and their devices, each with its connection state, its last
 activity, and a `current` flag on the one calling. This is what the application's
 connection diagnostics reads.
 
+### `GET /api/v1/users?q=` *(implemented)*
+
+The accounts whose username or name contains the fragment, for the member-adding
+autocomplete. Reserved to an **owner of at least one channel**: an ordinary member has
+nobody to add, so they have no reason to enumerate the accounts.
+
 ## Channels and rights *(implemented)*
 
 A channel carries a `slug`, which is **the publish path**: `POST /{slug}`. It is
