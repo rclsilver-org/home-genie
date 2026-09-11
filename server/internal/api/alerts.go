@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -355,9 +354,9 @@ func (s *Server) handleUnackAlert(w http.ResponseWriter, r *http.Request) {
 
 	// The cadence starts again where it stopped, and only for an alert still
 	// firing: a resolved one has nothing left to remind anybody about. The
-	// count is not reset, so the next reminder reads "Rappel 4" and not
-	// "Rappel 1" — the numbering is the history of what this alert cost in
-	// interruptions, not a counter of the current attempt.
+	// count is not reset, so the next reminder is announced as the fourth
+	// and not as the first — the numbering is the history of what this
+	// alert cost in interruptions, not a counter of the current attempt.
 	if changed && alert.Status == store.AlertFiring {
 		s.rearmReminder(alert)
 	}
@@ -415,10 +414,12 @@ func (s *Server) RemindAlert(alert store.Alert, count int) error {
 	message, err := s.store.CreateMessage(store.NewMessage{
 		ChannelID: channel.ID,
 		AlertID:   &alertID,
-		// The count is in the title on purpose: a reminder that looks
-		// exactly like the original is indistinguishable from a duplicate,
-		// and gets dismissed as one.
-		Title:    fmt.Sprintf("Rappel %d — %s", count, alert.Title()),
+		// The same title as the original: it is the same alert saying the
+		// same thing again. What differs is the rank, which travels beside
+		// the message so the phone can show it without eating the title —
+		// a reminder replaces the notification it repeats, and a title cut
+		// in half to make room for "Rappel 3 — " tells nobody anything.
+		Title:    alert.Title(),
 		Body:     alert.Body(),
 		Priority: severityPriority(alert.Severity),
 		Tags:     append(alertTags(alert), "reminder"),
@@ -430,7 +431,9 @@ func (s *Server) RemindAlert(alert store.Alert, count int) error {
 
 	s.logger.Info("alert reminder", "alert_id", alert.ID, "count", count,
 		"channel", channel.Slug)
-	s.publishMessage(channel, message)
+	payload := toMessagePayload(message, channel.Slug)
+	payload.ReminderCount = count
+	s.publishMessagePayload(channel, message, payload)
 	return nil
 }
 

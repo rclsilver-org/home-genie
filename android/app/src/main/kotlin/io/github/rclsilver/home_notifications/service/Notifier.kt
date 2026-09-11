@@ -6,8 +6,12 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Bundle
 import io.github.rclsilver.home_notifications.MainActivity
 import io.github.rclsilver.home_notifications.net.MessagePayload
+
+/** The message id carried by the notification, so it can be found again. */
+private const val EXTRA_MESSAGE_ID = "io.github.rclsilver.home_notifications.MESSAGE_ID"
 
 /**
  * Shows the messages received.
@@ -24,9 +28,14 @@ class Notifier(private val context: Context) {
 
     fun show(message: MessagePayload) {
         val channelId = ensureChannel(message.channelSlug, message.priority)
+        // An alert has a single notification, whatever the number of
+        // reminders: a reminder replaces the one it repeats. Stacking fifteen
+        // of them adds nothing and drowns everything else.
+        val tag = message.alertId?.let { "alert-$it" } ?: message.channelSlug
+        val notificationId = (message.alertId ?: message.id).toInt()
 
         val open = PendingIntent.getActivity(
-            context, message.id.toInt(),
+            context, notificationId,
             Intent(context, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
@@ -34,7 +43,7 @@ class Notifier(private val context: Context) {
         // Swiping means "read", not "acknowledged": the two gestures are
         // distinct, and an unacknowledged alert comes back at the next reminder.
         val dismissed = PendingIntent.getBroadcast(
-            context, message.id.toInt(),
+            context, notificationId,
             Intent(context, DismissReceiver::class.java)
                 .putExtra(DismissReceiver.EXTRA_MESSAGE_ID, message.id),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
@@ -53,6 +62,14 @@ class Notifier(private val context: Context) {
             .setAutoCancel(true)
             .setWhen(System.currentTimeMillis())
 
+        // The rank of the reminder goes in the header line, not in the title:
+        // prefixing "Reminder 3 — " truncated the title on the lock screen,
+        // which is exactly where it must be read at a glance.
+        if (message.reminderCount > 0) {
+            builder.setSubText("Reminder ${message.reminderCount}")
+            builder.setNumber(message.reminderCount)
+        }
+
         // The category decides the fate of the notification under Do Not
         // Disturb: an alert at maximum priority is an alarm, everything else
         // is a message.
@@ -70,8 +87,8 @@ class Notifier(private val context: Context) {
                 context, alertId.toInt(),
                 Intent(context, AckReceiver::class.java)
                     .putExtra(AckReceiver.EXTRA_ALERT_ID, alertId)
-                    .putExtra(AckReceiver.EXTRA_TAG, message.channelSlug)
-                    .putExtra(AckReceiver.EXTRA_NOTIFICATION_ID, message.id.toInt()),
+                    .putExtra(AckReceiver.EXTRA_TAG, tag)
+                    .putExtra(AckReceiver.EXTRA_NOTIFICATION_ID, notificationId),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
             builder.addAction(
@@ -88,8 +105,8 @@ class Notifier(private val context: Context) {
                 context, message.channelId.toInt(),
                 Intent(context, MuteReceiver::class.java)
                     .putExtra(MuteReceiver.EXTRA_CHANNEL_ID, message.channelId)
-                    .putExtra(MuteReceiver.EXTRA_TAG, message.channelSlug)
-                    .putExtra(MuteReceiver.EXTRA_NOTIFICATION_ID, message.id.toInt()),
+                    .putExtra(MuteReceiver.EXTRA_TAG, tag)
+                    .putExtra(MuteReceiver.EXTRA_NOTIFICATION_ID, notificationId),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
             builder.addAction(
@@ -97,11 +114,12 @@ class Notifier(private val context: Context) {
             )
         }
 
-        val notification = builder.build()
+        // The message shown is no longer the one naming the notification: a
+        // read performed elsewhere carries a message id, and that is how it
+        // has to be found.
+        builder.addExtras(Bundle().apply { putLong(EXTRA_MESSAGE_ID, message.id) })
 
-        // The tag is the message identifier: an update of the same message
-        // replaces the notification instead of stacking one more.
-        manager.notify(message.channelSlug, message.id.toInt(), notification)
+        manager.notify(tag, notificationId, builder.build())
     }
 
     /**
@@ -148,15 +166,15 @@ class Notifier(private val context: Context) {
     /**
      * Withdraws the notifications of messages read elsewhere.
      *
-     * The remote event does not carry the slug, and the tag is built from it;
-     * so the displayed notifications are swept to find the matching ones,
-     * rather than guessing a tag.
+     * Matching happens on the message id carried in the extras, not on the
+     * notification id: since a reminder replaces its alert's notification,
+     * the two no longer coincide.
      */
     fun cancelAll(messageIds: List<Long>) {
         if (messageIds.isEmpty()) return
-        val wanted = messageIds.map { it.toInt() }.toSet()
+        val wanted = messageIds.toSet()
         manager.activeNotifications
-            .filter { it.id in wanted }
+            .filter { it.notification.extras.getLong(EXTRA_MESSAGE_ID, 0) in wanted }
             .forEach { manager.cancel(it.tag, it.id) }
     }
 }

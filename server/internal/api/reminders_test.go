@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"testing"
@@ -137,4 +138,50 @@ func TestOpeningAnAlertArmsTheCadence(t *testing.T) {
 
 func store2Query(channelID int64) store.AlertQuery {
 	return store.AlertQuery{ChannelID: channelID}
+}
+
+// What the phone receives for a reminder: the alert's title, intact, and the
+// rank beside it. The rank inside the title made it truncate on the lock
+// screen, which is exactly where it must be read at a glance.
+func TestAReminderCarriesItsRankBesideTheTitle(t *testing.T) {
+	httpServer, server, token := liveServer(t)
+	repository := server.store
+
+	channel := decode[channelPayload](t, call(t, server, http.MethodPost, "/api/v1/channels",
+		token, createChannelRequest{Slug: "alerts-critical", Name: "Alertes"}))
+	publishToken := decode[publishTokenPayload](t, call(t, server, http.MethodPost,
+		fmt.Sprintf("/api/v1/channels/%d/tokens", channel.ID), token,
+		createTokenRequest{Name: "alertmanager"}))
+
+	webhook(t, server, "alerts-critical", publishToken.Token, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("a", "critical")}})
+
+	alerts, err := repository.AlertsOf(store.AlertQuery{ChannelID: channel.ID})
+	if err != nil || len(alerts) != 1 {
+		t.Fatalf("alerts = %+v (%v)", alerts, err)
+	}
+
+	conn := dial(t, httpServer.URL, token, 0)
+	readUntil(t, conn, frameReady)
+
+	if err := server.RemindAlert(alerts[0], 3); err != nil {
+		t.Fatal(err)
+	}
+
+	frame := readUntil(t, conn, eventMessageNew)
+	var payload messagePayload
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Title != alerts[0].Title() {
+		t.Fatalf("the title should be the alert's: %q", payload.Title)
+	}
+	if payload.ReminderCount != 3 {
+		t.Fatalf("the reminder rank should travel with the message: %+v", payload)
+	}
+	// The body names the rule and the machine: "laptop" alone does not say
+	// what is wrong with it.
+	if payload.Body != "DiskFull — nas" {
+		t.Fatalf("body = %q", payload.Body)
+	}
 }

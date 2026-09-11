@@ -17,6 +17,10 @@ data class MessagePayload(
     val priority: Int = 3,
     val tags: List<String> = emptyList(),
     @SerialName("click_url") val clickUrl: String = "",
+    // Rank of the reminder, present only on what arrives over the socket:
+    // it is what tells "third time" from "first time" without eating the
+    // title.
+    @SerialName("reminder_count") val reminderCount: Int = 0,
     val read: Boolean = false,
 )
 

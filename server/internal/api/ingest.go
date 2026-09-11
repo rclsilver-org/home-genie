@@ -199,7 +199,11 @@ type messagePayload struct {
 	ClickURL    string          `json:"click_url,omitempty"`
 	Actions     json.RawMessage `json:"actions,omitempty"`
 	CreatedAt   time.Time       `json:"created_at"`
-	// Specific to the caller, like the unread count.
+	// The reminder rank, only on what the devices receive: the stored message
+	// does not carry it, and reading it back later would give today's counter,
+	// not the one of the day it went out.
+	ReminderCount int `json:"reminder_count,omitempty"`
+	// Per caller, like the unread counter.
 	Read bool `json:"read"`
 }
 
@@ -221,6 +225,14 @@ func toMessagePayload(message store.Message, slug string) messagePayload {
 // no live socket must still appear in the timeline, since "queued but never
 // sent" is exactly the miss the reliability figure is looking for.
 func (s *Server) publishMessage(channel store.Channel, message store.Message) {
+	s.publishMessagePayload(channel, message, toMessagePayload(message, channel.Slug))
+}
+
+// publishMessagePayload is the same fanout with a payload the caller owns —
+// a reminder carries a rank the stored message does not.
+func (s *Server) publishMessagePayload(
+	channel store.Channel, message store.Message, payload messagePayload,
+) {
 	members, err := s.store.MemberUserIDs(channel.ID)
 	if err != nil {
 		s.logger.Error("listing the members", "error", err, "channel_id", channel.ID)
@@ -233,5 +245,5 @@ func (s *Server) publishMessage(channel store.Channel, message store.Message) {
 		}
 	}
 
-	s.publishToUsers(members, eventMessageNew, toMessagePayload(message, channel.Slug))
+	s.publishToUsers(members, eventMessageNew, payload)
 }

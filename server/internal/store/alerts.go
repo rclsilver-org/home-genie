@@ -60,16 +60,22 @@ func (a Alert) Title() string {
 	return "Alerte"
 }
 
-// Body prefers the description, falling back to the instance so a message
-// is never empty.
+// Body prefers the description. Without one it names the rule and the
+// machine rather than the machine alone: a notification whose second line
+// reads "laptop" says nothing about what is wrong there.
 func (a Alert) Body() string {
 	if description := a.Annotations["description"]; description != "" {
 		return description
 	}
-	if instance := a.Labels["instance"]; instance != "" {
+	name, instance := a.Labels["alertname"], a.Labels["instance"]
+	switch {
+	case name != "" && instance != "":
+		return name + " — " + instance
+	case name != "":
+		return name
+	default:
 		return instance
 	}
-	return a.Labels["alertname"]
 }
 
 // NewAlert is what the Alertmanager webhook yields for one alert.
