@@ -76,3 +76,28 @@ func TestAMuteSilencesOnlyItsAuthor(t *testing.T) {
 		t.Fatalf("alice sees bob's mute: %+v", hers)
 	}
 }
+
+// What stays reserved to owners: what commits the installation, and not
+// what commits nobody but oneself.
+func TestOnlyAnOwnerTouchesTheInstallation(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	withLocalAccount(t, repository, "claire", testPassword)
+	channel, _ := issueChannelAndToken(t, repository, "alerts")
+	shareChannel(t, repository, channel.ID, "claire", "reader")
+
+	claire := session(t, server, "claire", testPassword)
+	if r := call(t, server, http.MethodPut, "/api/v1/quiet-hours", claire,
+		quietHoursPayload{From: "23:00", To: "07:00"}); r.Code != http.StatusForbidden {
+		t.Fatalf("quiet hours: status = %d, want 403", r.Code)
+	}
+	if r := call(t, server, http.MethodGet, "/api/v1/users", claire, nil); r.Code != http.StatusForbidden {
+		t.Fatalf("accounts: status = %d, want 403", r.Code)
+	}
+
+	thomas := session(t, server, "thomas", testPassword)
+	if r := call(t, server, http.MethodPut, "/api/v1/quiet-hours", thomas,
+		quietHoursPayload{From: "23:00", To: "07:00"}); r.Code != http.StatusOK {
+		t.Fatalf("the owner must be allowed: %d %s", r.Code, r.Body)
+	}
+}

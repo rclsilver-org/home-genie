@@ -66,6 +66,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		request.Platform = "unknown"
 	}
 
+	// Refused before verifying anything: the argon2id check is expensive by
+	// construction, so letting it run on uncapped attempts would hand a
+	// denial of service to anyone who can spell an account name.
+	if !s.logins.allow(strings.ToLower(request.Username)) {
+		s.logger.Warn("login attempts throttled", "username", request.Username)
+		w.Header().Set("Retry-After", "900")
+		s.writeError(w, http.StatusTooManyRequests, "too many attempts, try again later")
+		return
+	}
+
 	user, err := s.store.UserByUsername(request.Username)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.logger.Error("looking the user up", "error", err)
@@ -93,6 +103,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
+
+	// The account has just proved itself: its failures are forgotten, or a
+	// run of typos would lock it out after the fact.
+	s.logins.reset(strings.ToLower(request.Username))
 
 	plain, hashed, err := auth.NewToken(auth.DeviceTokenPrefix)
 	if err != nil {

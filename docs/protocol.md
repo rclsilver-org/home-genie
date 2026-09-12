@@ -38,6 +38,10 @@ the same time: verification runs against a decoy digest when the account is unkn
 Unknown fields in the body are refused with `400`, so that a client-side typo is an
 error rather than a setting silently ignored.
 
+Repeated failures on the same username are throttled: five attempts per quarter of an
+hour, then `429`. An argon2id verification is deliberately expensive, which makes an
+unthrottled login endpoint both a guessing oracle and a way to exhaust the server.
+
 ### `GET /api/v1/auth/config` *(implemented)*
 
 What the sign-in screen needs before showing anything: whether OIDC is enabled, and if

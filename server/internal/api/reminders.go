@@ -158,6 +158,9 @@ func (s *Server) handleSetQuietHours(w http.ResponseWriter, r *http.Request) {
 // Any member may set it, like the mute: it says when the house sleeps, and
 // asking for a right to say that would mean someone cannot.
 func (s *Server) handleSetDefaultQuietHours(w http.ResponseWriter, r *http.Request) {
+	if !s.requireOwner(w, r) {
+		return
+	}
 	s.setQuietHours(w, r, nil, "(default)")
 }
 

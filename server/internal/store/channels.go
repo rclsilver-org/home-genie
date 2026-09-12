@@ -340,3 +340,19 @@ func (s *Store) scanChannel(row *sql.Row) (Channel, error) {
 	channel.CreatedAt, _ = parseTime(created)
 	return channel, nil
 }
+
+// OwnsAnyChannel reports whether the user administers at least one channel.
+//
+// It answers "may this account speak for the installation" — set the global
+// mute, read the account list to share a channel. Being a member is not
+// enough: a reader was given sight of one feed, not the right to silence the
+// house for everybody.
+func (s *Store) OwnsAnyChannel(userID int64) (bool, error) {
+	var count int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM channel_members WHERE user_id = ? AND role = ?`,
+		userID, RoleOwner).Scan(&count); err != nil {
+		return false, fmt.Errorf("counting the owned channels: %w", err)
+	}
+	return count > 0, nil
+}

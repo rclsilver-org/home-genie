@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/rclsilver-org/home-genie/server/internal/hub"
 	"github.com/rclsilver-org/home-genie/server/internal/oidc"
@@ -19,11 +20,17 @@ type Server struct {
 	hub    *hub.Hub
 	oidc   *oidc.Verifier
 	logger *slog.Logger
+	logins *attemptLimiter
 }
 
 // New builds the HTTP surface.
 func New(s *store.Store, h *hub.Hub, verifier *oidc.Verifier, logger *slog.Logger) *Server {
-	return &Server{store: s, hub: h, oidc: verifier, logger: logger}
+	return &Server{
+		store: s, hub: h, oidc: verifier, logger: logger,
+		// Five attempts per quarter of an hour: enough to fumble a password
+		// in the middle of the night, too few to walk a dictionary.
+		logins: newAttemptLimiter(5, 15*time.Minute),
+	}
 }
 
 // Routes returns the mux serving the API.

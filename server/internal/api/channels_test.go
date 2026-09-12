@@ -302,6 +302,9 @@ func TestUserSearchMatchesBothNames(t *testing.T) {
 	if _, err := repository.CreateLocalUser("claire", "Claire Dupont", "x", false); err != nil {
 		t.Fatal(err)
 	}
+	// Completion serves sharing a channel: it requires administering one, or
+	// a reader invited to a feed could enumerate every account.
+	issueChannelAndToken(t, repository, "alerts")
 	token := session(t, server, "thomas", testPassword)
 
 	byUsername := decode[[]userSuggestionPayload](t, call(t, server, http.MethodGet,

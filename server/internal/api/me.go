@@ -88,6 +88,10 @@ type userSuggestionPayload struct {
 // members of their own channels, at the cost of a screen that works for some
 // accounts and not others.
 func (s *Server) handleSearchUsers(w http.ResponseWriter, r *http.Request) {
+	if !s.requireOwner(w, r) {
+		return
+	}
+
 	users, err := s.store.SearchUsers(r.URL.Query().Get("q"), 20)
 	if err != nil {
 		s.logger.Error("searching the users", "error", err)
@@ -102,4 +106,26 @@ func (s *Server) handleSearchUsers(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	s.writeJSON(w, http.StatusOK, payload)
+}
+
+// requireOwner refuses a caller who administers no channel at all.
+//
+// The installation-wide gestures — silencing everything, listing the accounts
+// to share a channel with — are not for a reader who was given sight of one
+// feed. The check is the same for both, because the question is the same: is
+// this account responsible for something here.
+func (s *Server) requireOwner(w http.ResponseWriter, r *http.Request) bool {
+	user, _ := UserFrom(r.Context())
+
+	owner, err := s.store.OwnsAnyChannel(user.ID)
+	if err != nil {
+		s.logger.Error("checking the ownership", "error", err, "user_id", user.ID)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return false
+	}
+	if !owner {
+		s.writeError(w, http.StatusForbidden, "only a channel owner may do this")
+		return false
+	}
+	return true
 }
