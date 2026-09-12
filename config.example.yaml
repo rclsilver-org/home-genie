@@ -13,7 +13,7 @@ database: "/var/lib/home-genie/hgenied.db"
 # debug, info, warn, error
 log_level: "info"
 
-# The OIDC provider. Leaving it empty disables OIDC: the local break-glass
+# OIDC provider. Leaving it empty disables OIDC: the local break-glass
 # account keeps working, which is a valid deployment.
 #
 # No client secret is needed: the application is a public client using

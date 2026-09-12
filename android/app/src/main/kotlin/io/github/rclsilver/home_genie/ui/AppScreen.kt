@@ -65,12 +65,11 @@ import io.github.rclsilver.home_genie.net.markChannelRead
 import io.github.rclsilver.home_genie.service.ConnectionService
 
 /**
- * Address pre-filled on the first sign-in, purely for convenience. Port 8088
- * and not 8080: that is the one the development machine's firewall lets
- * through, and an unreachable server looks exactly like a stopped one. The
- * field stays editable.
+ * Address pre-filled on the first sign-in, purely for convenience: the field
+ * stays editable, and it is what lets one switch between a development server
+ * and production.
  */
-private const val DEFAULT_SERVER_URL = "http://192.0.2.10:8088"
+private const val DEFAULT_SERVER_URL = "https://"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

@@ -1,173 +1,174 @@
-# home-genie
+# Home Genie
 
-A replacement for ntfy in a homelab: a Go server (`hgenied`) and a native Android
-application. Alertmanager alerts have a real lifecycle in it — opening, acknowledgement,
-reminders, closing — and the notifications of the homelab's applications read as a
-shared feed with a "seen" state per user.
+A self-hosted notification server and its Android application, for a homelab.
 
-## Status
+Two things live in it, and they are not alike:
 
-Step 0 of the plan: build chain, Debian package, CI. The server loads its configuration
-and answers on `/healthz`; the channels, the ingest and the WebSocket land at step 1.
+- **Alerts** have a lifecycle. Alertmanager opens them, somebody takes them, they
+  remind as long as nobody deals with them, and they close when the condition goes
+  away. They concern everyone at once.
+- **Notifications** are a feed. The media tools, the image watcher, a script: they
+  announce a fact already accomplished. Each person reads them for themselves, and one
+  person's "read" state changes nothing for the others.
 
-## Serveur
+The project replaces an ntfy paired with an ntfy-alertmanager bridge, where an alert
+was just one more message and acknowledgement did not exist.
 
-Development happens in a nix shell, which provides **Go 1.25** — and not the nixpkgs
-default 1.24, because `modernc.org/sqlite` requires it. Going through Go's automatic
-toolchain mechanism would download a version from outside nixpkgs on every clean build.
+## What it does
+
+**On the alert side.** Native ingest of the Alertmanager v4 webhook, with dedup on the
+`fingerprint`: an alert re-delivered forty times stays one alert, whose occurrences are
+counted. Local acknowledgement — nothing is written back to Alertmanager, so the usual
+dashboards keep showing it and the phone never writes into the chain it watches.
+Reminders at a cadence chosen per severity, overridable per channel. A timeline per
+alert: opening, notifications, reminders, repeats, acknowledgement, resolution.
+
+**On the notification side.** **ntfy-compatible** publishing: the `Title`, `Priority`,
+`Tags` and `Click` headers and the JSON body are accepted as they are, so a producer
+already configured for ntfy changes only its URL and its token. A "read" state per
+user, and a delivery timeline per message — who it was sent to, on which device, when
+it was received and read.
+
+**Silence.** Two distinct mechanisms, and the difference matters:
+
+| | Effect | Scope | What is lost |
+|---|---|---|---|
+| **Quiet hours** | the notification arrives without noise | global, overridable per channel and per severity | nothing — a reminder comes back at the end of the window |
+| **Mute** | no notification at all | yours alone, every channel, bounded in time | the notifications of that period |
+
+A quiet window that does not name a severity **never** covers a critical alert:
+silencing one is legitimate on a homelab, but it is asked for by naming `critical`,
+not inherited from a setting meant for downloads.
+
+A mute, on the other hand, goes above everything — criticals included — but it
+silences only the person who sets it. It is a deliberate and personal gesture: "be
+quiet, I am the one making the noise". The other members keep being notified, and do
+not even see that somebody went quiet.
+
+**Channels and rights.** A channel carries members (read, publish, administer),
+publish tokens — one per producer, revocable without touching the others — and its own
+reminder cadences.
+
+## How it works
+
+```
+Alertmanager ─┐
+media tools  ─┼─→ hgenied ──WebSocket──→ Android application
+scripts      ─┘      │
+                     └─ SQLite (state, history, hashed tokens)
+```
+
+The phone keeps an **open socket** in a foreground service. Every event carries a
+monotonic sequence number; on reconnection the client asks for what follows the last
+number it received, so an outage only costs time, never a message. An application
+heartbeat crosses the socket in both directions: the server knows a device is still
+listening, which an open TCP socket does not prove.
+
+No FCM: notifications pass through no third party, and the server is not reachable
+from the outside to emit them.
+
+## Installing
+
+### Server
+
+A Debian package for `amd64` and `arm64`, published in the GitHub releases. It
+installs `hgenied`, its systemd unit and its system user.
 
 ```sh
-nix-shell
-make            # binary for the current platform, in dist/
-make binaries   # linux/amd64 + linux/arm64
-make test
-make test-race  # with the race detector (needs cgo, hence gcc)
-make vet
-make version
+dpkg -i home-genie_<version>_arm64.deb
+$EDITOR /etc/home-genie/config.yaml
+systemctl enable --now home-genie
 ```
 
-`CGO_ENABLED=0` is enforced so that cross-compiling to arm64 needs no toolchain.
-**A consequence not to work around**: the SQLite driver has to be the pure-Go
-`modernc.org/sqlite`, never `mattn/go-sqlite3`. Same rule for the migrations, which use
-golang-migrate's `sqlite` driver and not its `sqlite3`.
+The configuration fits in a few lines — see [`config.example.yaml`](config.example.yaml).
+The service listens in cleartext: put it behind a reverse proxy that terminates TLS
+and knows how to relay a WebSocket.
 
-`golang-migrate` is held at v4.19.1: v4.20.1 requires Go ≥ 1.25.11, which nixpkgs 25.05
-does not provide. The reason is written down in `go.mod` so that nobody undoes it by
-mistake.
-
-The shell's `gcc` only serves the race detector; the shipped binaries stay CGO-free.
-
-To run it locally:
+Create the first account, the **break-glass** one, the account that works when the
+identity provider no longer answers:
 
 ```sh
-cp config.example.yaml config.yaml
-# set listen to 0.0.0.0:8080 so that the phone reaches the server over the LAN
-./dist/hgenied-linux-amd64 -config config.yaml
+hgenied admin create -config /etc/home-genie/config.yaml -username <name>
 ```
 
-The SQLite database is created and migrated at startup; `/healthz` returns the schema
-version and switches to 503 if the database becomes unreachable.
-## Android application
+### Application
 
-The SDK is provisioned by `androidenv`, in an **ephemeral shell**: nothing is installed
-on the system, the SDK is realised in `/nix/store` and the variables exist only inside
-the shell.
+The APK is published with each release. It installs by sideload: on first launch, give
+the server URL, then sign in — with the break-glass account, or through OIDC if one is
+configured.
+
+The home screen only shows a warning when a system setting is genuinely missing:
+battery optimisation exemption, notification permission, Do Not Disturb access. When
+everything is in order, it says nothing.
+
+## Authentication
+
+Two paths, for two situations:
+
+- **OIDC** (Authorization Code + PKCE, public client) — the normal path. The
+  application opens a Custom Tab, gets an ID token back, and the server verifies it
+  against the provider's JWKS. No client secret is embedded in the APK, because a
+  native application cannot keep one.
+- **Local account** — the break-glass door, protected by argon2id. It exists for the
+  day the identity provider is down, which is exactly the day the alerts matter.
+
+In both cases the application receives a **device token** of its own. The server stores
+only its SHA-256 fingerprint; the cleartext token appears once.
+
+## Decisions, and why
+
+**A WebSocket, not FCM.** The risk of this project is not the network, it is Android's
+battery arbitration. A night of continuous observation settled it: the socket held for
+7 h 56 without interruption under a vendor Android skin. FCM stays a way out if the
+figures degrade, not a prerequisite.
+
+**Alerts and notifications are two objects.** A notification is read or unread, per
+person, and nothing else ever happens to it. An alert opens, is taken, reminds and
+closes, for everyone at once. Mixing them forced each to borrow the other's
+vocabulary.
+
+**Two channels are enough.** Splitting `alerts-critical` / `alerts-warning` re-encodes
+in the channel what the alert already carries — its `severity` label — and everything
+that could use it already relies on the severity. What a channel really separates is
+**who can read**, **what a token may publish**, and **what can be silenced**.
+
+**Silence rather than hold back.** Holding a message until morning would make it
+arrive out of order in a feed whose "unread" state already keeps it for the morning;
+holding an alert back is losing it. During quiet hours everything arrives — the phone
+keeps quiet.
+
+**Acknowledgement is local.** Setting a silence in Alertmanager from a phone would mix
+the notification chain with the alerting chain. The alert stays `firing`: only its
+reminders stop, and the author of the acknowledgement is visible.
+
+**A reminder replaces its notification.** Fifteen reminders do not make fifteen lines
+in the shade. The reminder's rank travels beside the message and is shown in the
+header, not in the title, which would be truncated on the lock screen.
+
+**SQLite, without CGO.** `modernc.org/sqlite` in pure Go: cross-compiling to an
+ARM server then needs no toolchain, and the server needs no service running beside
+it.
+
+## Development
+
+Everything goes through ephemeral nix shells; nothing is installed on the machine.
 
 ```sh
-nix-shell nix/android-sdk.nix
-make apk          # debug APK, in android/app/build/outputs/apk/debug/
-make android-test
+nix-shell shell.nix --run 'make test'              # server: tests and coverage
+nix-shell shell.nix --run 'make all'               # binary for the current architecture
+nix-shell nix/android-sdk.nix --run 'make apk'     # debug APK
+nix-shell nix/android-emulator.nix --run 'make emulator'   # emulator for the tests
 ```
 
-Two NixOS specifics are already handled; there is nothing to remember:
+The development shell does not carry the emulator: the system image weighs close to
+two gigabytes and the daily build does not need it. An emulator does not replace a
+real phone — it is an AOSP with no vendor skin, so it says nothing about a
+manufacturer's battery arbitration — but it does well what the phone does badly:
+replay a complete journey, hands-free, reproducibly.
 
-- **`buildToolsVersion` is pinned** in `android/app/build.gradle.kts`. Without it AGP
-  resolves its own default version and tries to install it into the SDK, which fails
-  since the store is read-only.
-- **The SDK's own `aapt2` is forced** by the Makefile's `apk` target. The one AGP
-  downloads from Maven is a generic, unpatchelfed binary whose dynamic loader does not
-  exist on NixOS. The flag is only added when `ANDROID_HOME` points inside the store,
-  so CI on Ubuntu is unaffected.
+The server contract is described in [`docs/protocol.md`](docs/protocol.md), precisely
+enough for an iOS client to be written without reading the Go code.
 
-AGP marks `android.aapt2FromMavenOverride` as **experimental**. Debt worth knowing: if
-it is removed, the Android build on NixOS will break and will have to go through
-`nix-ld` or a hand-rolled patchelf.
+## Licence
 
-The three build-tools versions — Makefile, `build.gradle.kts`, `nix/android-sdk.nix` —
-have to stay in step.
-
-The SDK is built with no garbage-collector root: a `nix-collect-garbage` will take it
-back and it will have to be downloaded again.
-
-### Identifiants
-
-```
-applicationId   io.github.rclsilver.home_genie
-OAuth scheme    io.github.rclsilver.home-genie://oauth2redirect
-```
-
-The scheme carries a **dash** where the `applicationId` carries an underscore, and that
-is not a typo: an underscore is legal in a Java package, but RFC 3986 forbids it in a
-URI scheme and a browser may refuse to redirect to it. The three places that carry this
-scheme — the manifest, `OidcClient.kt` and the provider client's `valid_redirect_uris`
-— have to stay in step, or the provider refuses the redirect.
-
-Changing the `applicationId` makes the application a **different application** as far as
-Android is concerned: the old one stays installed with its own session, and has to be
-uninstalled so that two services do not each hold a socket.
-
-### On the phone
-
-The test is run **on a real phone, not on an emulator**: an AOSP emulator reproduces
-neither a vendor skin's battery management nor its "sleeping apps" list, which is
-precisely what decides the reliability of the foreground service. That is why
-`nix/android-sdk.nix` does not include the emulator.
-
-```sh
-adb pair <phone-ip>:<port>   # port given by the wireless debugging screen
-adb connect <phone-ip>:5555
-adb install -r android/app/build/outputs/apk/debug/app-debug.apk
-adb logcat -s HomeNotifications
-```
-
-`adb` is **only** for debugging. The data path goes through the LAN address of the
-development server, never through `adb reverse`: adb-over-WiFi drops with the phone's
-deep sleep, and a broken tunnel would be indistinguishable from a server outage during
-the overnight survival test.
-## Checks before the host
-
-Three things cannot be proved by a unit test, and are therefore checked locally without
-putting anything on the target host.
-
-**The WebSocket proxy.** An nginx in a container carrying *exactly* the configuration
-the reverse proxy serves — `websocket` is `true` by default, hence the
-`Upgrade`/`Connection` headers, `proxy_buffering off` and `proxy_read_timeout 3600s`.
-A socket opened through that proxy over TLS does receive the live events, not only the
-replay. The `hgenied` vhost is therefore a copy of the ntfy one.
-
-Beware of a coupling nothing signals in the nginx configuration: the heartbeat interval
-must stay well below `proxy_read_timeout`, since every beat rearms that counter.
-Spacing the heartbeats out beyond it to save battery would have nginx cut the socket.
-
-**The arm64 binary.** Run under `qemu-aarch64` — provided by nixpkgs, so with no
-privilege and no change to `binfmt_misc`:
-
-```sh
-nix-shell -p qemu --run 'qemu-aarch64 ./dist/hgenied-linux-arm64 -version'
-```
-
-It starts, migrates its database and answers on `/healthz`. That is what proves the
-pure-Go SQLite bet holds on the target architecture.
-
-**The arm64 package.** Built and installed inside an amd64 Debian container with
-`--force-architecture`: the `postinst` creates the user and the directory tree, the
-permissions are right, and a purge keeps the state.
-
-The Debian container must be started with `--platform linux/amd64` if an arm64 image of
-the same tag is lying around in the Docker cache.
-## Debian package
-
-Built by CI (`jiro4989/build-deb-action`) and published in the release with the
-binaries: `latest` as a prerelease on every push to `master`, a tagged release on
-`v*.*.*`.
-
-The package installs `/usr/bin/hgenied`, the conffile `/etc/home-genie/config.yaml`
-and the systemd unit. The `postinst` creates the system user and
-`/var/lib/home-genie`, **enables** the service but does not start it on a first
-installation: configuration management lays down the real configuration and then starts
-the service. On an upgrade, the service is restarted if it was running.
-
-`/var/lib/home-genie` is deliberately kept, even on a purge: it holds the alert history
-and the device tokens.
-
-Validating the package locally, without touching the target host:
-
-```sh
-make binaries
-# assembly and installation inside a throwaway Debian container
-```
-
-## Deployment
-
-The configuration-management module lives elsewhere, not here. The host is installed
-only once, in its final configuration, at step 5 of the plan.
+A personal project, published as is.
