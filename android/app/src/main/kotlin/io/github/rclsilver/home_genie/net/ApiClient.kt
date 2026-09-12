@@ -1,5 +1,6 @@
 package io.github.rclsilver.home_genie.net
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
@@ -14,7 +15,7 @@ import java.util.concurrent.TimeUnit
 private val JSON = "application/json".toMediaType()
 
 /** HTTP client for the server. The WebSocket lives in [SocketClient]. */
-class ApiClient(private val http: OkHttpClient = defaultClient()) {
+class ApiClient(private val http: OkHttpClient = shared) {
 
     // encodeDefaults: without it kotlinx.serialization omits the fields left
     // at their default value, and the server applies its own — that is how
@@ -26,7 +27,7 @@ class ApiClient(private val http: OkHttpClient = defaultClient()) {
 
     suspend fun login(serverUrl: String, request: LoginRequest): Result<LoginResponse> =
         withContext(Dispatchers.IO) {
-            runCatching {
+            apiCatching {
                 val body = json.encodeToString(LoginRequest.serializer(), request)
                     .toRequestBody(JSON)
                 val call = http.newCall(
@@ -51,21 +52,49 @@ class ApiClient(private val http: OkHttpClient = defaultClient()) {
             .getOrElse { "HTTP error $code" }
 
     companion object {
-        fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            // The WebSocket carries its own application heartbeat; this one
-            // keeps the TCP connection alive across NATs.
-            .pingInterval(20, TimeUnit.SECONDS)
-            .build()
+        /**
+         * The client, shared.
+         *
+         * OkHttp asks for a single instance: each one carries its own
+         * connection pool and its own threads. Building one per call, as
+         * every function in this file used to, prevented any connection
+         * reuse and left threads behind on every screen reload — and a
+         * screen reloads on every event received.
+         */
+        val shared: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                // The WebSocket carries its own application heartbeat; this
+                // one keeps the TCP connection alive through NATs.
+                .pingInterval(20, TimeUnit.SECONDS)
+                .build()
+        }
     }
 }
+
+/**
+ * Like `runCatching`, but lets cancellation through.
+ *
+ * `runCatching` catches every `Throwable`, `CancellationException`
+ * included: a screen left during a request saw its own cancellation turned
+ * into a failure, and showed an error for a request nobody was waiting for
+ * any more. Worse, the parent coroutine never completed.
+ */
+internal inline fun <T> apiCatching(block: () -> T): Result<T> = try {
+    Result.success(block())
+} catch (cancellation: CancellationException) {
+    throw cancellation
+} catch (error: Throwable) {
+    Result.failure(error)
+}
+
 
 /** Marks a message as read. Used when a notification is swiped away. */
 suspend fun markRead(serverUrl: String, token: String, messageId: Long): Result<Unit> =
     withContext(Dispatchers.IO) {
-        runCatching {
-            val call = ApiClient.defaultClient().newCall(
+        apiCatching {
+            val call = ApiClient.shared.newCall(
                 Request.Builder()
                     .url("${serverUrl.trimEnd('/')}/api/v1/messages/$messageId/read")
                     .post(ByteArray(0).toRequestBody(null))
@@ -81,8 +110,8 @@ suspend fun markRead(serverUrl: String, token: String, messageId: Long): Result<
 /** Lists the caller's channels, with their own unread count. */
 suspend fun listChannels(serverUrl: String, token: String): Result<List<ChannelPayload>> =
     withContext(Dispatchers.IO) {
-        runCatching {
-            val call = ApiClient.defaultClient().newCall(
+        apiCatching {
+            val call = ApiClient.shared.newCall(
                 Request.Builder()
                     .url("${serverUrl.trimEnd('/')}/api/v1/channels")
                     .header("Authorization", "Bearer $token")
@@ -100,8 +129,8 @@ suspend fun listChannels(serverUrl: String, token: String): Result<List<ChannelP
 /** Marks a whole channel as read for the caller. */
 suspend fun markChannelRead(serverUrl: String, token: String, channelId: Long): Result<Unit> =
     withContext(Dispatchers.IO) {
-        runCatching {
-            val call = ApiClient.defaultClient().newCall(
+        apiCatching {
+            val call = ApiClient.shared.newCall(
                 Request.Builder()
                     .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId/read")
                     .post(ByteArray(0).toRequestBody(null))
@@ -120,8 +149,8 @@ internal fun String.toRequestBodyJson() = this.toRequestBody(JSON)
 /** Acknowledges an alert. Local to the server: nothing goes to Alertmanager. */
 suspend fun ackAlert(serverUrl: String, token: String, alertId: Long): Result<Unit> =
     withContext(Dispatchers.IO) {
-        runCatching {
-            val call = ApiClient.defaultClient().newCall(
+        apiCatching {
+            val call = ApiClient.shared.newCall(
                 Request.Builder()
                     .url("${serverUrl.trimEnd('/')}/api/v1/alerts/$alertId/ack")
                     .post(ByteArray(0).toRequestBody(null))
@@ -143,8 +172,8 @@ suspend fun ackAlert(serverUrl: String, token: String, alertId: Long): Result<Un
  */
 suspend fun unackAlert(serverUrl: String, token: String, alertId: Long): Result<Unit> =
     withContext(Dispatchers.IO) {
-        runCatching {
-            val call = ApiClient.defaultClient().newCall(
+        apiCatching {
+            val call = ApiClient.shared.newCall(
                 Request.Builder()
                     .url("${serverUrl.trimEnd('/')}/api/v1/alerts/$alertId/ack")
                     .delete()
@@ -160,7 +189,7 @@ suspend fun unackAlert(serverUrl: String, token: String, alertId: Long): Result<
 /** A channel's feed, newest first. */
 suspend fun fetchMessages(serverUrl: String, token: String, channelId: Long, limit: Int = 50):
     Result<List<MessagePayload>> = withContext(Dispatchers.IO) {
-    runCatching {
+    apiCatching {
         get(serverUrl, token, "/api/v1/channels/$channelId/messages?limit=$limit") { text ->
             Json { ignoreUnknownKeys = true }
                 .decodeFromString(ListSerializer(MessagePayload.serializer()), text)
@@ -176,7 +205,7 @@ suspend fun fetchMessages(serverUrl: String, token: String, channelId: Long, lim
  */
 suspend fun fetchFeed(serverUrl: String, token: String, unreadOnly: Boolean, limit: Int = 100):
     Result<List<MessagePayload>> = withContext(Dispatchers.IO) {
-    runCatching {
+    apiCatching {
         val suffix = if (unreadOnly) "?unread=1&limit=$limit" else "?limit=$limit"
         get(serverUrl, token, "/api/v1/messages$suffix") { text ->
             Json { ignoreUnknownKeys = true }
@@ -188,7 +217,7 @@ suspend fun fetchFeed(serverUrl: String, token: String, unreadOnly: Boolean, lim
 /** The number of unread notifications, for the menu badge. */
 suspend fun fetchUnreadFeedCount(serverUrl: String, token: String): Result<Int> =
     withContext(Dispatchers.IO) {
-        runCatching {
+        apiCatching {
             get(serverUrl, token, "/api/v1/messages/unread") { text ->
                 Json { ignoreUnknownKeys = true }
                     .decodeFromString(UnreadCountPayload.serializer(), text).count
@@ -199,8 +228,8 @@ suspend fun fetchUnreadFeedCount(serverUrl: String, token: String): Result<Int> 
 /** Marks the whole notification feed as read, for this user alone. */
 suspend fun markFeedRead(serverUrl: String, token: String): Result<Unit> =
     withContext(Dispatchers.IO) {
-        runCatching {
-            val call = ApiClient.defaultClient().newCall(
+        apiCatching {
+            val call = ApiClient.shared.newCall(
                 Request.Builder()
                     .url("${serverUrl.trimEnd('/')}/api/v1/messages/read")
                     .post(ByteArray(0).toRequestBody(null))
@@ -216,7 +245,7 @@ suspend fun markFeedRead(serverUrl: String, token: String): Result<Unit> =
 /** A channel's alerts; openOnly restricts to those still open. */
 suspend fun fetchAlerts(serverUrl: String, token: String, channelId: Long, openOnly: Boolean):
     Result<List<AlertPayload>> = withContext(Dispatchers.IO) {
-    runCatching {
+    apiCatching {
         val suffix = if (openOnly) "?open=1" else ""
         get(serverUrl, token, "/api/v1/channels/$channelId/alerts$suffix") { text ->
             Json { ignoreUnknownKeys = true }
@@ -228,9 +257,9 @@ suspend fun fetchAlerts(serverUrl: String, token: String, channelId: Long, openO
 /** Marks a channel read up to the given message, or entirely. */
 suspend fun markChannelReadUpTo(serverUrl: String, token: String, channelId: Long, uptoId: Long):
     Result<Unit> = withContext(Dispatchers.IO) {
-    runCatching {
+    apiCatching {
         val suffix = if (uptoId > 0) "?upto_id=$uptoId" else ""
-        val call = ApiClient.defaultClient().newCall(
+        val call = ApiClient.shared.newCall(
             Request.Builder()
                 .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId/read$suffix")
                 .post(ByteArray(0).toRequestBody(null))
@@ -245,7 +274,7 @@ suspend fun markChannelReadUpTo(serverUrl: String, token: String, channelId: Lon
 
 /** An authenticated GET, so the plumbing is not repeated on every call. */
 private fun <T> get(serverUrl: String, token: String, path: String, decode: (String) -> T): T {
-    val call = ApiClient.defaultClient().newCall(
+    val call = ApiClient.shared.newCall(
         Request.Builder()
             .url("${serverUrl.trimEnd('/')}$path")
             .header("Authorization", "Bearer $token")
@@ -261,7 +290,7 @@ private fun <T> get(serverUrl: String, token: String, path: String, decode: (Str
 /** The cadences applying to a channel: its overrides and inherited defaults. */
 suspend fun fetchReminderPolicies(serverUrl: String, token: String, channelId: Long):
     Result<List<ReminderPolicyPayload>> = withContext(Dispatchers.IO) {
-    runCatching {
+    apiCatching {
         get(serverUrl, token, "/api/v1/channels/$channelId/reminders") { text ->
             Json { ignoreUnknownKeys = true }
                 .decodeFromString(ListSerializer(ReminderPolicyPayload.serializer()), text)
@@ -276,9 +305,9 @@ suspend fun setReminderPolicy(
     channelId: Long,
     policy: ReminderPolicyPayload,
 ): Result<Unit> = withContext(Dispatchers.IO) {
-    runCatching {
+    apiCatching {
         val payload = Json.encodeToString(ReminderPolicyPayload.serializer(), policy)
-        val call = ApiClient.defaultClient().newCall(
+        val call = ApiClient.shared.newCall(
             Request.Builder()
                 .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId/reminders")
                 .put(payload.toRequestBodyJson())
@@ -301,7 +330,7 @@ suspend fun setReminderPolicy(
 /** The state of the caller's own mute. */
 suspend fun fetchMute(serverUrl: String, token: String): Result<MutePayload> =
     withContext(Dispatchers.IO) {
-        runCatching {
+        apiCatching {
             get(serverUrl, token, "/api/v1/mute") { text ->
                 Json { ignoreUnknownKeys = true }
                     .decodeFromString(MutePayload.serializer(), text)
@@ -316,9 +345,9 @@ suspend fun fetchMute(serverUrl: String, token: String): Result<MutePayload> =
  */
 suspend fun setMute(serverUrl: String, token: String, untilRfc3339: String): Result<Unit> =
     withContext(Dispatchers.IO) {
-        runCatching {
+        apiCatching {
             val body = """{"muted_until":"$untilRfc3339"}"""
-            val call = ApiClient.defaultClient().newCall(
+            val call = ApiClient.shared.newCall(
                 Request.Builder()
                     .url("${serverUrl.trimEnd('/')}/api/v1/mute")
                     .put(body.toRequestBodyJson())
@@ -334,7 +363,7 @@ suspend fun setMute(serverUrl: String, token: String, untilRfc3339: String): Res
 /** Creates a channel; the caller becomes its owner. */
 suspend fun createChannel(serverUrl: String, token: String, request: CreateChannelRequest):
     Result<ChannelPayload> = withContext(Dispatchers.IO) {
-    runCatching {
+    apiCatching {
         postJson(
             serverUrl, token, "/api/v1/channels",
             Json.encodeToString(CreateChannelRequest.serializer(), request),
@@ -348,7 +377,7 @@ suspend fun createChannel(serverUrl: String, token: String, request: CreateChann
 /** A channel's publish tokens, revoked ones included. */
 suspend fun fetchPublishTokens(serverUrl: String, token: String, channelId: Long):
     Result<List<PublishTokenPayload>> = withContext(Dispatchers.IO) {
-    runCatching {
+    apiCatching {
         get(serverUrl, token, "/api/v1/channels/$channelId/tokens") { text ->
             Json { ignoreUnknownKeys = true }
                 .decodeFromString(ListSerializer(PublishTokenPayload.serializer()), text)
@@ -359,7 +388,7 @@ suspend fun fetchPublishTokens(serverUrl: String, token: String, channelId: Long
 /** Issues a publish token. The cleartext value comes back only here. */
 suspend fun createPublishToken(serverUrl: String, token: String, channelId: Long, name: String):
     Result<PublishTokenPayload> = withContext(Dispatchers.IO) {
-    runCatching {
+    apiCatching {
         postJson(
             serverUrl, token, "/api/v1/channels/$channelId/tokens",
             Json.encodeToString(CreateTokenRequest.serializer(), CreateTokenRequest(name)),
@@ -373,8 +402,8 @@ suspend fun createPublishToken(serverUrl: String, token: String, channelId: Long
 /** Revokes a token. Immediate: it stops resolving at once. */
 suspend fun revokePublishToken(serverUrl: String, token: String, channelId: Long, tokenId: Long):
     Result<Unit> = withContext(Dispatchers.IO) {
-    runCatching {
-        val call = ApiClient.defaultClient().newCall(
+    apiCatching {
+        val call = ApiClient.shared.newCall(
             Request.Builder()
                 .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId/tokens/$tokenId")
                 .delete()
@@ -395,7 +424,7 @@ private fun <T> postJson(
     payload: String,
     decode: (String) -> T,
 ): T {
-    val call = ApiClient.defaultClient().newCall(
+    val call = ApiClient.shared.newCall(
         Request.Builder()
             .url("${serverUrl.trimEnd('/')}$path")
             .post(payload.toRequestBodyJson())
@@ -418,7 +447,7 @@ private fun <T> postJson(
 /** A message's distribution timeline, oldest first. */
 suspend fun fetchTimeline(serverUrl: String, token: String, messageId: Long):
     Result<List<TimelineEntryPayload>> = withContext(Dispatchers.IO) {
-    runCatching {
+    apiCatching {
         get(serverUrl, token, "/api/v1/messages/$messageId/timeline") { text ->
             Json { ignoreUnknownKeys = true }
                 .decodeFromString(ListSerializer(TimelineEntryPayload.serializer()), text)
@@ -429,7 +458,7 @@ suspend fun fetchTimeline(serverUrl: String, token: String, messageId: Long):
 /** All of the caller's alerts, across every channel. */
 suspend fun fetchAllAlerts(serverUrl: String, token: String, openOnly: Boolean):
     Result<List<AlertPayload>> = withContext(Dispatchers.IO) {
-    runCatching {
+    apiCatching {
         val suffix = if (openOnly) "?open=1" else ""
         get(serverUrl, token, "/api/v1/alerts$suffix") { text ->
             Json { ignoreUnknownKeys = true }
@@ -447,7 +476,7 @@ suspend fun fetchAlertsFiltered(
     closedOnly: Boolean = false,
     severity: String = "",
 ): Result<List<AlertPayload>> = withContext(Dispatchers.IO) {
-    runCatching {
+    apiCatching {
         val params = buildList {
             if (openOnly) add("open=1")
             if (unackedOnly) add("unacked=1")
@@ -465,7 +494,7 @@ suspend fun fetchAlertsFiltered(
 /** An alert and its timeline. */
 suspend fun fetchAlertDetail(serverUrl: String, token: String, alertId: Long):
     Result<AlertDetailPayload> = withContext(Dispatchers.IO) {
-    runCatching {
+    apiCatching {
         get(serverUrl, token, "/api/v1/alerts/$alertId") { text ->
             Json { ignoreUnknownKeys = true }
                 .decodeFromString(AlertDetailPayload.serializer(), text)
@@ -476,7 +505,7 @@ suspend fun fetchAlertDetail(serverUrl: String, token: String, alertId: Long):
 /** A channel's members, with their role. */
 suspend fun fetchMembers(serverUrl: String, token: String, channelId: Long):
     Result<List<MemberPayload>> = withContext(Dispatchers.IO) {
-    runCatching {
+    apiCatching {
         get(serverUrl, token, "/api/v1/channels/$channelId/members") { text ->
             Json { ignoreUnknownKeys = true }
                 .decodeFromString(ListSerializer(MemberPayload.serializer()), text)
@@ -490,8 +519,8 @@ suspend fun fetchMembers(serverUrl: String, token: String, channelId: Long):
  */
 suspend fun setMember(serverUrl: String, token: String, channelId: Long, username: String,
                       role: String): Result<MemberPayload> = withContext(Dispatchers.IO) {
-    runCatching {
-        val call = ApiClient.defaultClient().newCall(
+    apiCatching {
+        val call = ApiClient.shared.newCall(
             Request.Builder()
                 .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId/members/$username")
                 .put("""{"role":"$role"}""".toRequestBodyJson())
@@ -519,8 +548,8 @@ suspend fun setMember(serverUrl: String, token: String, channelId: Long, usernam
 /** Removes somebody from a channel. */
 suspend fun removeMember(serverUrl: String, token: String, channelId: Long, username: String):
     Result<Unit> = withContext(Dispatchers.IO) {
-    runCatching {
-        val call = ApiClient.defaultClient().newCall(
+    apiCatching {
+        val call = ApiClient.shared.newCall(
             Request.Builder()
                 .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId/members/$username")
                 .delete()
@@ -546,7 +575,7 @@ suspend fun removeMember(serverUrl: String, token: String, channelId: Long, user
  */
 suspend fun fetchQuietHours(serverUrl: String, token: String, channelId: Long? = null):
     Result<List<QuietHoursPayload>> = withContext(Dispatchers.IO) {
-    runCatching {
+    apiCatching {
         val path = channelId?.let { "/api/v1/channels/$it/quiet-hours" } ?: "/api/v1/quiet-hours"
         get(serverUrl, token, path) { text ->
             Json { ignoreUnknownKeys = true }
@@ -562,9 +591,9 @@ suspend fun fetchQuietHours(serverUrl: String, token: String, channelId: Long? =
 suspend fun setQuietHours(serverUrl: String, token: String, channelId: Long?,
                           window: QuietHoursPayload): Result<Unit> =
     withContext(Dispatchers.IO) {
-        runCatching {
+        apiCatching {
             val payload = Json.encodeToString(QuietHoursPayload.serializer(), window)
-            val call = ApiClient.defaultClient().newCall(
+            val call = ApiClient.shared.newCall(
                 Request.Builder()
                     .url(
                         serverUrl.trimEnd('/') + (channelId?.let {
@@ -594,8 +623,8 @@ suspend fun setQuietHours(serverUrl: String, token: String, channelId: Long?,
  */
 suspend fun deleteChannel(serverUrl: String, token: String, channelId: Long): Result<Unit> =
     withContext(Dispatchers.IO) {
-        runCatching {
-            val call = ApiClient.defaultClient().newCall(
+        apiCatching {
+            val call = ApiClient.shared.newCall(
                 Request.Builder()
                     .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId")
                     .delete()
@@ -618,7 +647,7 @@ suspend fun deleteChannel(serverUrl: String, token: String, channelId: Long): Re
 /** The accounts whose username or name contains [fragment]. */
 suspend fun searchUsers(serverUrl: String, token: String, fragment: String):
     Result<List<UserSuggestionPayload>> = withContext(Dispatchers.IO) {
-    runCatching {
+    apiCatching {
         val query = java.net.URLEncoder.encode(fragment, "UTF-8")
         get(serverUrl, token, "/api/v1/users?q=$query") { text ->
             Json { ignoreUnknownKeys = true }

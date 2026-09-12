@@ -37,7 +37,7 @@ sealed interface SocketEvent {
  * Keeping that decision in one place avoids two reconnection loops fighting
  * each other.
  */
-class SocketClient(private val http: OkHttpClient = ApiClient.defaultClient()) {
+class SocketClient(private val http: OkHttpClient = ApiClient.shared) {
 
     private val json = Json { ignoreUnknownKeys = true }
 

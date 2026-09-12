@@ -52,8 +52,8 @@ private val json = Json { ignoreUnknownKeys = true }
  */
 suspend fun fetchAuthConfig(serverUrl: String): Result<AuthConfig> =
     withContext(Dispatchers.IO) {
-        runCatching {
-            val call = ApiClient.defaultClient().newCall(
+        apiCatching {
+            val call = ApiClient.shared.newCall(
                 Request.Builder().url("${serverUrl.trimEnd('/')}/api/v1/auth/config").build()
             )
             call.execute().use { response ->
@@ -67,9 +67,9 @@ suspend fun fetchAuthConfig(serverUrl: String): Result<AuthConfig> =
 /** Discovers the identity provider's endpoints. */
 suspend fun discover(issuer: String): Result<OidcEndpoints> =
     withContext(Dispatchers.IO) {
-        runCatching {
+        apiCatching {
             val url = "${issuer.trimEnd('/')}/.well-known/openid-configuration"
-            ApiClient.defaultClient().newCall(Request.Builder().url(url).build())
+            ApiClient.shared.newCall(Request.Builder().url(url).build())
                 .execute().use { response ->
                     val text = response.body?.string().orEmpty()
                     if (!response.isSuccessful) throw IOException("HTTP error ${response.code}")
@@ -104,7 +104,7 @@ suspend fun exchangeCode(
     code: String,
     verifier: String,
 ): Result<String> = withContext(Dispatchers.IO) {
-    runCatching {
+    apiCatching {
         val body = FormBody.Builder()
             .add("grant_type", "authorization_code")
             .add("client_id", clientId)
@@ -113,7 +113,7 @@ suspend fun exchangeCode(
             .add("code_verifier", verifier)
             .build()
 
-        ApiClient.defaultClient()
+        ApiClient.shared
             .newCall(Request.Builder().url(endpoints.token).post(body).build())
             .execute().use { response ->
                 val text = response.body?.string().orEmpty()
@@ -137,12 +137,12 @@ suspend fun loginWithIdToken(
     idToken: String,
     deviceName: String,
 ): Result<LoginResponse> = withContext(Dispatchers.IO) {
-    runCatching {
+    apiCatching {
         val payload = json.encodeToString(
             OidcLoginRequest.serializer(),
             OidcLoginRequest(idToken = idToken, deviceName = deviceName),
         )
-        val call = ApiClient.defaultClient().newCall(
+        val call = ApiClient.shared.newCall(
             Request.Builder()
                 .url("${serverUrl.trimEnd('/')}/api/v1/auth/oidc")
                 .post(payload.toRequestBodyJson())

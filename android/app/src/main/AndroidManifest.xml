@@ -27,7 +27,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.HomeNotifications">
+        android:theme="@style/Theme.HomeGenie">
 
         <activity
             android:name=".MainActivity"
