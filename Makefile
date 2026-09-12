@@ -90,3 +90,24 @@ android-test:
 .PHONY: android-clean
 android-clean:
 	cd $(ANDROID_DIR) && gradle clean $(GRADLE_FLAGS)
+
+# --- Emulator, for test campaigns ------------------------------------------
+#
+# The development SDK carries no emulator (the system image weighs ~2 GiB):
+# these targets are used inside nix-shell nix/android-emulator.nix.
+
+AVD_NAME ?= home-genie-test
+
+.PHONY: avd
+avd:
+	@if ! avdmanager list avd -c | grep -qx '$(AVD_NAME)'; then \
+		echo no | avdmanager create avd -n '$(AVD_NAME)' \
+			-k 'system-images;android-36;google_apis;x86_64' --force; \
+	fi
+
+.PHONY: emulator
+emulator: avd
+	@emulator -avd '$(AVD_NAME)' -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect &
+	@adb wait-for-device
+	@until [ "$$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do sleep 2; done
+	@echo "emulator ready"
