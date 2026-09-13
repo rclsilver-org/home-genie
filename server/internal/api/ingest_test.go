@@ -250,3 +250,121 @@ func TestMessagePaging(t *testing.T) {
 		t.Fatalf("second page = %+v", next)
 	}
 }
+
+// publishWithQuery posts with every field in the query string and nothing in
+// the body — the shape the *arr suite sends, and the only one it sends.
+func publishWithQuery(t *testing.T, server *Server, slug, token, query string) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, "/"+slug+"?"+query, nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	server.Routes().ServeHTTP(recorder, request)
+	return recorder
+}
+
+// Radarr and Sonarr — the producers this endpoint was written for — set no
+// headers at all: every field goes in the query string. Until it was read,
+// their connection test answered "an empty message has nothing to notify"
+// and no amount of configuring on their side could have helped.
+func TestNtfyQueryParametersCarryTheMessage(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	channel, token := issueChannelAndToken(t, repository, "mediacenter")
+
+	recorder := publishWithQuery(t, server, "mediacenter", token,
+		"title=Sonarr&message=The+episode+is+downloaded&priority=4"+
+			"&tags=tv%2Cdownload&click=https%3A%2F%2Fsonarr.example%2F1")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body)
+	}
+
+	message := lastMessage(t, repository, channel.ID)
+	if message.Title != "Sonarr" || message.Body != "The episode is downloaded" {
+		t.Fatalf("message = %+v", message)
+	}
+	if message.Priority != store.PriorityHigh {
+		t.Fatalf("priority = %d, want %d", message.Priority, store.PriorityHigh)
+	}
+	if len(message.Tags) != 2 || message.Tags[0] != "tv" || message.Tags[1] != "download" {
+		t.Fatalf("tags = %v", message.Tags)
+	}
+	if message.ClickURL == "" {
+		t.Fatal("the click URL was lost")
+	}
+}
+
+// The short spellings work in the query string too, as they do in headers.
+func TestNtfyQueryAliases(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	channel, token := issueChannelAndToken(t, repository, "mediacenter")
+
+	recorder := publishWithQuery(t, server, "mediacenter", token,
+		"t=short+title&m=short+message&p=5&ta=one%2Ctwo")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body)
+	}
+
+	message := lastMessage(t, repository, channel.ID)
+	if message.Title != "short title" || message.Body != "short message" {
+		t.Fatalf("message = %+v", message)
+	}
+	if message.Priority != store.PriorityMax {
+		t.Fatalf("priority = %d, want %d", message.Priority, store.PriorityMax)
+	}
+	if len(message.Tags) != 2 {
+		t.Fatalf("tags = %v", message.Tags)
+	}
+}
+
+// The more deliberate carrier wins. A producer that sets a header had to go
+// out of its way to do it, so it outranks the same field in the query string
+// — and the query still carries whatever the header left alone.
+func TestNtfyHeadersWinOverTheQueryString(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	channel, token := issueChannelAndToken(t, repository, "mediacenter")
+
+	request := httptest.NewRequest(http.MethodPost,
+		"/mediacenter?title=from+the+query&message=from+the+query", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("X-Title", "from the header")
+	recorder := httptest.NewRecorder()
+	server.Routes().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body)
+	}
+
+	message := lastMessage(t, repository, channel.ID)
+	if message.Title != "from the header" {
+		t.Fatalf("title = %q, want the header to win", message.Title)
+	}
+	if message.Body != "from the query" {
+		t.Fatalf("body = %q, want the query to still apply", message.Body)
+	}
+}
+
+// And the query string outranks the body, for the same reason.
+func TestNtfyQueryWinsOverTheBody(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	channel, token := issueChannelAndToken(t, repository, "mediacenter")
+
+	recorder := publish(t, server, "mediacenter", token, "from the body", nil)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/mediacenter?message=from+the+query",
+		bytes.NewReader([]byte("from the body")))
+	request.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	server.Routes().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body)
+	}
+
+	if message := lastMessage(t, repository, channel.ID); message.Body != "from the query" {
+		t.Fatalf("body = %q, want the query to win", message.Body)
+	}
+}

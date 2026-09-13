@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -112,7 +113,30 @@ func (s *Server) parseNtfyRequest(r *http.Request, channel store.Channel) (store
 		input.Body = string(body)
 	}
 
-	// Headers win over the JSON body, which is also ntfy's behaviour.
+	// A producer that cannot set headers passes the same fields in the query
+	// string, which ntfy accepts too. This is not a marginal path: the *arr
+	// suite — the one this endpoint exists for — sends every field this way
+	// and no other, so without it the endpoint misses the case it was built
+	// for.
+	query := r.URL.Query()
+	if title := firstValue(query, "title", "t"); title != "" {
+		input.Title = title
+	}
+	if message := firstValue(query, "message", "m"); message != "" {
+		input.Body = message
+	}
+	if priority := firstValue(query, "priority", "prio", "p"); priority != "" {
+		input.Priority = parsePriority(priority)
+	}
+	if tags := firstValue(query, "tags", "tag", "ta"); tags != "" {
+		input.Tags = splitTags(tags)
+	}
+	if click := firstValue(query, "click"); click != "" {
+		input.ClickURL = click
+	}
+
+	// Headers win over the query string, which wins over the body: the more
+	// explicit the carrier, the later it is applied. That is ntfy's order too.
 	if title := firstHeader(r, "X-Title", "Title", "t"); title != "" {
 		input.Title = title
 	}
@@ -131,8 +155,12 @@ func (s *Server) parseNtfyRequest(r *http.Request, channel store.Channel) (store
 	// something the app cannot render would be worse than nothing, and no
 	// producer we are migrating uses it. Our own alerts set actions
 	// natively, in JSON.
-	if raw := firstHeader(r, "X-Actions", "Actions", "action"); raw != "" {
-		s.logger.Warn("the Actions header is not supported yet, ignored",
+	raw := firstHeader(r, "X-Actions", "Actions", "action")
+	if raw == "" {
+		raw = firstValue(query, "actions", "action")
+	}
+	if raw != "" {
+		s.logger.Warn("the Actions field is not supported yet, ignored",
 			"channel", channel.Slug, "value", raw)
 	}
 
@@ -148,6 +176,17 @@ func (s *Server) parseNtfyRequest(r *http.Request, channel store.Channel) (store
 func firstHeader(r *http.Request, names ...string) string {
 	for _, name := range names {
 		if value := strings.TrimSpace(r.Header.Get(name)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// firstValue returns the first of names present in the query string, so
+// both ntfy's long and short spellings work there as well.
+func firstValue(values url.Values, names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(values.Get(name)); value != "" {
 			return value
 		}
 	}
