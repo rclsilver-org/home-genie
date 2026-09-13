@@ -23,6 +23,10 @@ data class MessagePayload(
     @SerialName("reminder_count") val reminderCount: Int = 0,
     // The mute: the message arrives, the device does not notify.
     val silent: Boolean = false,
+    // Set on the message that closes an alert. Such a message still carries an
+    // alert_id — it is about an alert — but there is nothing left to
+    // acknowledge, and the server would refuse the gesture.
+    @SerialName("alert_resolved") val alertResolved: Boolean = false,
     val read: Boolean = false,
 )
 

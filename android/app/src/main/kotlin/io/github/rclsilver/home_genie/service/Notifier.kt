@@ -78,11 +78,14 @@ class Notifier(private val context: Context) {
             else Notification.CATEGORY_MESSAGE
         )
 
-        // "Acknowledge" only appears on a message reporting an alert. It is
-        // the central gesture: stopping the reminders without unlocking the
-        // phone. Distinct from swiping, which only marks it read and lets the
-        // alert come back at the next reminder.
-        message.alertId?.let { alertId ->
+        // "Acknowledge" only appears on a message reporting an alert that is
+        // still open. It is the central gesture: stopping the reminders
+        // without unlocking the phone. Distinct from swiping, which only marks
+        // it read and lets the alert come back at the next reminder.
+        //
+        // Never on a closure: there is nothing left to take, the server would
+        // refuse it, and a button that does nothing is worse than no button.
+        message.alertId?.takeIf { !message.alertResolved }?.let { alertId ->
             val ack = PendingIntent.getBroadcast(
                 context, alertId.toInt(),
                 Intent(context, AckReceiver::class.java)
@@ -134,8 +137,30 @@ class Notifier(private val context: Context) {
      * reliability screen is the only place where that gap becomes visible.
      * manque devient visible.
      */
+    /**
+     * How many pulses a priority is worth: one for information, two for a
+     * warning, three for a critical.
+     *
+     * Counting is what lets a pocket be read without being looked at, which is
+     * the whole point at three in the morning. The pulses are long and the gaps
+     * between them short, so three reads as three rather than as one long buzz.
+     *
+     * A minimum-priority message gets none: that is where a closure lands, and
+     * a closure has nothing to ask for.
+     */
+    private fun vibrationFor(priority: Int): LongArray? = when (priority) {
+        5 -> longArrayOf(0, 400, 200, 400, 200, 400)
+        4 -> longArrayOf(0, 400, 200, 400)
+        3, 2 -> longArrayOf(0, 400)
+        else -> null
+    }
+
     private fun ensureChannel(slug: String, priority: Int): String {
-        val id = "ch_${slug}_p$priority"
+        // The suffix is part of the identity on purpose. A channel's vibration
+        // can never be changed once Android has created it, and deleting one
+        // does not help: recreating it under the same id restores the settings
+        // it had. Changing the pattern therefore means changing the id.
+        val id = "ch_${slug}_p${priority}_v2"
         val bypass = priority >= 5 && manager.isNotificationPolicyAccessGranted
 
         val existing = manager.getNotificationChannel(id)
@@ -149,11 +174,12 @@ class Notifier(private val context: Context) {
             return id
         }
 
+        // An information alert has to be felt, so it sits at DEFAULT rather
+        // than LOW: below that, Android ignores the vibration entirely. What
+        // must stay unfelt is a closure, and that arrives at minimum.
         val importance = when (priority) {
-            5 -> NotificationManager.IMPORTANCE_HIGH
-            4 -> NotificationManager.IMPORTANCE_HIGH
-            3 -> NotificationManager.IMPORTANCE_DEFAULT
-            2 -> NotificationManager.IMPORTANCE_LOW
+            5, 4 -> NotificationManager.IMPORTANCE_HIGH
+            3, 2 -> NotificationManager.IMPORTANCE_DEFAULT
             else -> NotificationManager.IMPORTANCE_MIN
         }
 
@@ -161,6 +187,10 @@ class Notifier(private val context: Context) {
             NotificationChannel(id, "$slug — priority $priority", importance).apply {
                 description = "Priority $priority messages of channel $slug"
                 setBypassDnd(bypass)
+                vibrationFor(priority)?.let {
+                    enableVibration(true)
+                    vibrationPattern = it
+                }
             }
         )
         return id

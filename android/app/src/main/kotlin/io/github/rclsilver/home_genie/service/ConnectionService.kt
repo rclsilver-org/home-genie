@@ -21,6 +21,7 @@ import io.github.rclsilver.home_genie.MainActivity
 import io.github.rclsilver.home_genie.data.Settings
 import io.github.rclsilver.home_genie.net.Frame
 import io.github.rclsilver.home_genie.net.MessagePayload
+import io.github.rclsilver.home_genie.net.fetchAllAlerts
 import io.github.rclsilver.home_genie.net.MessagesReadPayload
 import io.github.rclsilver.home_genie.net.SocketClient
 import io.github.rclsilver.home_genie.net.SocketEvent
@@ -132,7 +133,6 @@ class ConnectionService : LifecycleService() {
 
             // A socket that had opened comes back at once; one that never
             // made it waits, so as not to hammer a server that may be down.
-            // injoignable.
             if (!opened) {
                 delay(backoffSeconds.seconds)
                 backoffSeconds = min(backoffSeconds * 2, 60)
@@ -151,6 +151,7 @@ class ConnectionService : LifecycleService() {
                         lastSeq = maxOf(state.value.lastSeq, frame.seq),
                     )
                 )
+                refreshOpenAlerts(settings)
                 return
             }
 
@@ -193,8 +194,40 @@ class ConnectionService : LifecycleService() {
             }
         }
 
+        // Every lifecycle event moves the count, and the ongoing line is read
+        // without opening anything — so it is refreshed from the server rather
+        // than incremented here.
+        if (frame.kind.startsWith("alert.")) {
+            refreshOpenAlerts(settings)
+        }
+
         recordEvent(settings, frame)
         acknowledge(frame)
+    }
+
+    /**
+     * Re-reads what is still open. Failure leaves the previous count in place:
+     * a transient error must not make the line claim the house is quiet.
+     */
+    private suspend fun refreshOpenAlerts(settings: Settings) {
+        val serverUrl = settings.serverUrlOnce()
+        val token = settings.tokenOnce()
+        if (serverUrl.isEmpty() || token.isEmpty()) return
+
+        fetchAllAlerts(serverUrl, token, openOnly = true).onSuccess { alerts ->
+            update(
+                state.value.copy(
+                    open = OpenAlerts(
+                        critical = alerts.count { it.severity == "critical" },
+                        warning = alerts.count { it.severity == "warning" },
+                        info = alerts.count { it.severity == "info" },
+                        other = alerts.count {
+                            it.severity !in setOf("critical", "warning", "info")
+                        },
+                    )
+                )
+            )
+        }
     }
 
     private suspend fun recordEvent(settings: Settings, frame: Frame) {
@@ -247,9 +280,20 @@ class ConnectionService : LifecycleService() {
             PendingIntent.FLAG_IMMUTABLE,
         )
 
+        // What the line says depends on what is worth knowing. Connected, the
+        // question is what is waiting; disconnected, the connection is the
+        // answer — and it is the one case worth saying out loud, since with no
+        // socket nothing arrives and the silence looks like calm.
+        val title = when {
+            !state.running -> "Service stopped"
+            !state.connected -> "Disconnected — reconnecting"
+            state.open.total > 0 -> state.open.summary()
+            else -> "Nothing to handle"
+        }
+
         return Notification.Builder(this, ONGOING_CHANNEL_ID)
-            .setContentTitle(if (state.connected) "Connected" else "Disconnected")
-            .setContentText(state.detail)
+            .setContentTitle(title)
+            .setContentText(if (state.connected) "Connected" else state.detail)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentIntent(open)
             .setOngoing(true)
@@ -272,12 +316,44 @@ class ConnectionService : LifecycleService() {
         val failures: Long = 0,
         val lastEvent: String = "",
         val startedAt: Long = System.currentTimeMillis(),
+        val open: OpenAlerts = OpenAlerts(),
     ) {
         companion object {
             fun connecting() = State(running = true, connected = false, detail = "connecting…")
             fun stopped(detail: String = "stopped") =
                 State(running = false, connected = false, detail = detail)
         }
+    }
+
+    /**
+     * What is still open, by severity — the one thing worth reading in the
+     * ongoing notification.
+     *
+     * Counted by the server and not tracked here: a count kept in parallel
+     * drifts, and this one is glanced at precisely when it must not be wrong.
+     */
+    data class OpenAlerts(
+        val critical: Int = 0,
+        val warning: Int = 0,
+        val info: Int = 0,
+        // Whatever a rule sends that is none of the three. Kept separate
+        // rather than folded into info: a severity nobody planned for should
+        // look unplanned, not quietly reclassified.
+        val other: Int = 0,
+    ) {
+        val total: Int get() = critical + warning + info + other
+
+        /**
+         * Reads as a sentence at a glance: "2 critical, 1 warning". Severities
+         * that count zero are left out — a line full of zeros is one the eye
+         * stops parsing, and the whole point is to be read without effort.
+         */
+        fun summary(): String = listOfNotNull(
+            critical.takeIf { it > 0 }?.let { "$it critical" },
+            warning.takeIf { it > 0 }?.let { "$it warning" },
+            info.takeIf { it > 0 }?.let { "$it info" },
+            other.takeIf { it > 0 }?.let { "$it other" },
+        ).joinToString(", ")
     }
 
     companion object {
