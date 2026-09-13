@@ -207,6 +207,10 @@ type messagePayload struct {
 	// the quiet hours, which merely lower the priority. The message still
 	// arrives and still counts as unread.
 	Silent bool `json:"silent,omitempty"`
+	// AlertResolved marks the message that closes an alert. The phone needs
+	// it to drop the acknowledge action: acknowledging a closed alert is a
+	// gesture the server refuses, so offering it is only a way to look broken.
+	AlertResolved bool `json:"alert_resolved,omitempty"`
 	// Per caller, like the unread counter.
 	Read bool `json:"read"`
 }

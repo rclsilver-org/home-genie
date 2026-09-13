@@ -417,22 +417,37 @@ func (s *Store) LogOf(alert Alert) ([]AlertLogEntry, error) {
 	}
 	defer rows.Close()
 
-	first := true
+	type message struct {
+		title string
+		at    time.Time
+	}
+	var messages []message
 	for rows.Next() {
 		var title, created string
 		if err := rows.Scan(&title, &created); err != nil {
 			return nil, fmt.Errorf("reading a message: %w", err)
 		}
 		at, _ := parseTime(created)
-		kind := AlertLogReminded
-		if first {
-			kind = AlertLogNotified
-			first = false
-		}
-		entries = append(entries, AlertLogEntry{At: at, Kind: kind, Detail: title})
+		messages = append(messages, message{title: title, at: at})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+
+	// A resolved alert's last message is its resolution, and the resolution
+	// already has an entry of its own further down. Counting it as a reminder
+	// showed the closure twice — once as a reminder that never fired, once as
+	// the closure — and made it look as though a closed alert kept insisting.
+	if alert.ResolvedAt != nil && len(messages) > 0 {
+		messages = messages[:len(messages)-1]
+	}
+
+	for i, m := range messages {
+		kind := AlertLogReminded
+		if i == 0 {
+			kind = AlertLogNotified
+		}
+		entries = append(entries, AlertLogEntry{At: m.at, Kind: kind, Detail: m.title})
 	}
 
 	// Alertmanager repeats are not messages — that is the whole point of the

@@ -186,11 +186,13 @@ func (s *Server) applyAlert(channel store.Channel, incoming alertmanagerAlert) a
 func (s *Server) announceAlert(channel store.Channel, alert store.Alert, kind string) {
 	title, priority := alert.Title(), severityPriority(alert.Severity)
 	body := alert.Body()
-	if kind == eventAlertResolved {
+	resolved := kind == eventAlertResolved
+	if resolved {
 		title = "Resolved — " + title
 		// A resolution must not shout: it is good news arriving after the
-		// alert already woke somebody.
-		priority = store.PriorityLow
+		// alert already woke somebody. Min and not low, because low is what
+		// an info-severity alert now uses, and that one is meant to be felt.
+		priority = store.PriorityMin
 	}
 
 	alertID := alert.ID
@@ -210,6 +212,10 @@ func (s *Server) announceAlert(channel store.Channel, alert store.Alert, kind st
 
 	payload := toMessagePayload(message, channel.Slug)
 	payload.Priority = s.deliveryPriority(channel, message, alert.Severity, priority)
+	// Tells the phone this message closes its alert rather than reports one.
+	// Without it the notification still offered to acknowledge something
+	// already over — a gesture the server would refuse.
+	payload.AlertResolved = resolved
 	s.publishMessagePayload(channel, message, payload)
 	s.publishToChannel(channel.ID, kind, toAlertPayload(alert, channel.Slug))
 }

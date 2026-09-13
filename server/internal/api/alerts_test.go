@@ -150,14 +150,16 @@ func TestResolutionClosesAndNotifiesQuietly(t *testing.T) {
 	}
 
 	// A resolution must not shout: it is good news arriving after the alert
-	// has already woken somebody.
+	// has already woken somebody. Minimum and not low, because low is where an
+	// info-severity alert sits, and that one is meant to be felt — one pulse.
+	// A closure asks for nothing, so it gets none.
 	messages := decode[[]messagePayload](t, call(t, server, http.MethodGet,
 		fmt.Sprintf("/api/v1/channels/%d/messages", channel.ID), token, nil))
 	if len(messages) != 2 {
 		t.Fatalf("%d messages, want 2", len(messages))
 	}
-	if messages[0].Priority != store.PriorityLow {
-		t.Fatalf("resolution priority = %d, want %d", messages[0].Priority, store.PriorityLow)
+	if messages[0].Priority != store.PriorityMin {
+		t.Fatalf("resolution priority = %d, want %d", messages[0].Priority, store.PriorityMin)
 	}
 }
 
@@ -625,5 +627,93 @@ func TestUnackOfAnUnackedAlertIsQuiet(t *testing.T) {
 		fmt.Sprintf("/api/v1/alerts/%d/ack", alerts[0].ID), token, nil)
 	if response.Code != http.StatusOK {
 		t.Fatalf("code %d", response.Code)
+	}
+}
+
+// A closed alert showed its closure twice in the timeline: once as the
+// resolution, once as a reminder that never fired. The message that closes an
+// alert is not a reminder, and counting it as one made a finished alert look
+// as though it were still insisting.
+func TestTheTimelineDoesNotCountTheResolutionAsAReminder(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	channel, publishToken := issueChannelAndToken(t, repository, "alerts")
+	token := session(t, server, "thomas", testPassword)
+
+	webhook(t, server, channel.Slug, publishToken, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("fp", "critical")}})
+	closing := firing("fp", "critical")
+	closing.Status = "resolved"
+	closing.EndsAt = "2026-09-10T20:30:00Z"
+	webhook(t, server, channel.Slug, publishToken, alertmanagerWebhook{
+		Version: "4", Status: "resolved", Alerts: []alertmanagerAlert{closing}})
+
+	alerts := decode[[]alertPayload](t, call(t, server, http.MethodGet,
+		"/api/v1/alerts?closed=1", token, nil))
+	if len(alerts) != 1 {
+		t.Fatalf("want one closed alert, got %+v", alerts)
+	}
+
+	detail := decode[alertDetailPayload](t, call(t, server, http.MethodGet,
+		fmt.Sprintf("/api/v1/alerts/%d", alerts[0].ID), token, nil))
+
+	reminded, resolvedEntries := 0, 0
+	for _, entry := range detail.Log {
+		switch entry.Kind {
+		case store.AlertLogReminded:
+			reminded++
+		case store.AlertLogResolved:
+			resolvedEntries++
+		}
+	}
+	if reminded != 0 {
+		t.Errorf("a reminder was recorded on an alert that never had one: %+v", detail.Log)
+	}
+	if resolvedEntries != 1 {
+		t.Errorf("the closure appears %d times, want once: %+v", resolvedEntries, detail.Log)
+	}
+}
+
+// The message that closes an alert must say so, or the phone keeps offering to
+// acknowledge something already over.
+func TestTheResolutionMessageIsMarkedAndStaysQuiet(t *testing.T) {
+	httpServer, server, token := liveServer(t)
+
+	channel := decode[channelPayload](t, call(t, server, http.MethodPost, "/api/v1/channels",
+		token, createChannelRequest{Slug: "alerts", Name: "Alerts"}))
+	publishToken := decode[publishTokenPayload](t, call(t, server, http.MethodPost,
+		fmt.Sprintf("/api/v1/channels/%d/tokens", channel.ID), token,
+		createTokenRequest{Name: "alertmanager"}))
+
+	conn := dial(t, httpServer.URL, token, 0)
+	readUntil(t, conn, frameReady)
+
+	webhook(t, server, "alerts", publishToken.Token, alertmanagerWebhook{
+		Version: "4", Alerts: []alertmanagerAlert{firing("fp", "critical")}})
+	opening := readUntil(t, conn, eventMessageNew)
+	var opened messagePayload
+	if err := json.Unmarshal(opening.Payload, &opened); err != nil {
+		t.Fatal(err)
+	}
+	if opened.AlertResolved {
+		t.Fatalf("an opening message claims to close its alert: %+v", opened)
+	}
+
+	ending := firing("fp", "critical")
+	ending.Status = "resolved"
+	ending.EndsAt = "2026-09-10T20:30:00Z"
+	webhook(t, server, "alerts", publishToken.Token, alertmanagerWebhook{
+		Version: "4", Status: "resolved", Alerts: []alertmanagerAlert{ending}})
+	closingFrame := readUntil(t, conn, eventMessageNew)
+	var closed messagePayload
+	if err := json.Unmarshal(closingFrame.Payload, &closed); err != nil {
+		t.Fatal(err)
+	}
+	if !closed.AlertResolved {
+		t.Fatalf("the closing message is not marked: %+v", closed)
+	}
+	if closed.Priority != store.PriorityMin {
+		t.Fatalf("a closure must stay quiet: priority %d, want %d",
+			closed.Priority, store.PriorityMin)
 	}
 }
