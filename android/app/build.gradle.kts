@@ -93,4 +93,8 @@ dependencies {
     implementation(libs.androidx.compose.material3)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    // Plain JVM tests, no Robolectric: what is worth testing here is decision
+    // logic, which is kept free of Android types precisely so it can be.
+    testImplementation(libs.junit)
 }

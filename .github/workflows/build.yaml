@@ -135,6 +135,11 @@ jobs:
         with:
           gradle-version: '8.14.3'
 
+      # Before the signing key is decrypted: a failing test should not need
+      # the secret to be on disk to stop the job.
+      - name: Run the unit tests
+        run: make android-test
+
       # The signing key, restored from a secret into a file the job deletes on
       # its way out. It never lands in the repository: the repository is public.
       #
