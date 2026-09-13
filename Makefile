@@ -83,6 +83,13 @@ GRADLE_FLAGS = -PappVersionName=$(VERSION) $(GRADLE_AAPT2_OVERRIDE)
 apk:
 	cd $(ANDROID_DIR) && gradle assembleDebug $(GRADLE_FLAGS)
 
+# The artifact a release ships: minified by R8 and signed with the stable key.
+# Without ANDROID_KEYSTORE_PATH in the environment it still builds, unsigned —
+# which is what makes it runnable locally without holding the release key.
+.PHONY: apk-release
+apk-release:
+	cd $(ANDROID_DIR) && gradle assembleRelease $(GRADLE_FLAGS)
+
 .PHONY: android-test
 android-test:
 	cd $(ANDROID_DIR) && gradle test $(GRADLE_FLAGS)

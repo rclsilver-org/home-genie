@@ -28,6 +28,26 @@ android {
         versionName = project.findProperty("appVersionName")?.toString() ?: "dev"
     }
 
+    // Release signing comes from the environment, never from a file in the
+    // tree: the repository is public. CI fills these from secrets; a local
+    // `make apk` leaves them unset and simply builds unsigned.
+    //
+    // The key must stay the same forever. Android identifies an application by
+    // its signature, so a new key is a new application: the phone has to
+    // uninstall, which drops the device token and the replay cursor. That is
+    // the one thing this project cannot afford to do on every release.
+    val keystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+    signingConfigs {
+        if (keystorePath != null) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -35,6 +55,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            if (keystorePath != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

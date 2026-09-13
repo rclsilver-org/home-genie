@@ -135,16 +135,53 @@ jobs:
         with:
           gradle-version: '8.14.3'
 
-      # `make apk` owns the flags. The aapt2 override it can add only triggers
-      # when ANDROID_HOME points into a nix store, so it stays inert here.
-      - name: Build the debug APK
-        run: make apk
+      # The signing key, restored from a secret into a file the job deletes on
+      # its way out. It never lands in the repository: the repository is public.
+      #
+      # This key is the application's identity. Android treats a differently
+      # signed APK as a different application, so losing it would force every
+      # phone to uninstall — dropping its device token and its replay cursor.
+      # That is why it is stable and stored, rather than generated per build.
+      - name: Restore the signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_B64:-}" ]; then
+            echo "ANDROID_KEYSTORE_B64 is not set; the APK would ship unsigned" >&2
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+
+      # `make apk-release` owns the flags. The aapt2 override it can add only
+      # triggers when ANDROID_HOME points into a nix store, so it stays inert
+      # here.
+      - name: Build the release APK
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: make apk-release
+
+      # Signed with the stable key, or the release is worthless: an unsigned or
+      # differently signed APK cannot update the one already on the phone.
+      - name: Check the APK is signed with the expected key
+        run: |
+          set -euo pipefail
+          apk=$(ls android/app/build/outputs/apk/release/*.apk)
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk" \
+            | grep -q 'CN=home-genie' \
+            || { echo "the APK is not signed with the home-genie key" >&2; exit 1; }
+
+      - name: Forget the signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks"
 
       - name: Upload the APK
         uses: actions/upload-artifact@v7
         with:
           name: android
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: android/app/build/outputs/apk/release/*.apk
   release:
     needs: [server, android]
     # Deliberately narrower than the push trigger: every branch builds and
