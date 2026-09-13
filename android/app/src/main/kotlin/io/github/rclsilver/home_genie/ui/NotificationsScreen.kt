@@ -144,8 +144,11 @@ private fun NotificationRow(message: MessagePayload, serverUrl: String, token: S
                     },
                     style = MaterialTheme.typography.bodySmall,
                 )
+                // Both states are verbs: a button says what pressing it does. And
+                // "delivery" is the word one uses about a notification, where
+                // "distribution" belongs to the system that sent it.
                 TextButton(onClick = { showTimeline = !showTimeline }) {
-                    Text(if (showTimeline) "Hide" else "Distribution")
+                    Text(if (showTimeline) "Hide delivery" else "Show delivery")
                 }
             }
 
