@@ -72,10 +72,8 @@ fun QuietHoursSection(channelId: Long?, serverUrl: String, token: String) {
     }
 
     SCOPES.forEach { severity ->
-        // The most specific wins: a channel override hides the default.
-        val own = windows.firstOrNull { it.severity == severity && it.isOverride }
-        val inherited = windows.firstOrNull { it.severity == severity && !it.isOverride }
-        QuietHoursCard(severity, own ?: inherited, inheritedFrom = own == null && inherited != null) { updated ->
+        val resolved = resolveQuietHours(windows, severity, inChannel = channelId != null)
+        QuietHoursCard(severity, resolved.window, inheritedFrom = resolved.inherited) { updated ->
             scope.launch {
                 setQuietHours(serverUrl, token, channelId, updated)
                     .onSuccess { error = ""; reloads++ }
@@ -119,8 +117,9 @@ private fun QuietHoursCard(
                     append(
                         when {
                             severity.isEmpty() ->
-                                "Does not cover critical alerts: silencing those is " +
-                                    "asked for by naming 'critical'."
+                                "Applies to everything except critical alerts, which " +
+                                    "keep ringing unless the critical card below " +
+                                    "silences them."
                             critical ->
                                 "Silencing a critical is a deliberate choice — on a " +
                                     "homelab, a disk filling up at night can wait " +
