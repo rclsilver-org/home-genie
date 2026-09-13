@@ -5,6 +5,27 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// Android compares versionCode — never versionName — to decide that one build
+// supersedes another. It is derived from the name Gradle is already given
+// rather than passed as a second property: two values that can disagree are
+// worse than one that has to be parsed.
+//
+// The commit distance of an off-tag build is deliberately dropped. Folding it
+// in would make 0.2.0-2 outrank the 0.2.1 that comes next, which is the very
+// regression this exists to prevent.
+fun versionCodeOf(name: String): Int {
+    val (major, minor, patch) =
+        Regex("""^(\d+)\.(\d+)\.(\d+)""").find(name)?.destructured ?: return 1
+    // 0.100.0 and 1.0.0 would land on the same code, and a collision stays
+    // invisible until updates silently stop arriving.
+    require(minor.toInt() < 100 && patch.toInt() < 100) {
+        "version $name does not fit the versionCode scheme"
+    }
+    return major.toInt() * 10000 + minor.toInt() * 100 + patch.toInt()
+}
+
+val appVersion = project.findProperty("appVersionName")?.toString() ?: "dev"
+
 android {
     namespace = "io.github.rclsilver.home_genie"
     compileSdk = 36
@@ -24,8 +45,8 @@ android {
         // run under, not under a compatibility mode we would lose later.
         targetSdk = 36
 
-        versionCode = 1
-        versionName = project.findProperty("appVersionName")?.toString() ?: "dev"
+        versionCode = versionCodeOf(appVersion)
+        versionName = appVersion
     }
 
     // Release signing comes from the environment, never from a file in the
