@@ -82,9 +82,9 @@ private val SPOKEN_FOR = setOf("alertname", "severity", "instance", "job")
  * two alerts sharing a name, so it is the part worth the width.
  */
 @Composable
-fun LabelChips(labels: Map<String, String>, max: Int = 3) {
+fun LabelChips(labels: Map<String, String>, keys: Set<String>, max: Int = 3) {
     val extra = labels
-        .filterKeys { it !in SPOKEN_FOR }
+        .filterKeys { it !in SPOKEN_FOR && it in keys }
         .entries.sortedBy { it.key }
         .take(max)
     if (extra.isEmpty()) return

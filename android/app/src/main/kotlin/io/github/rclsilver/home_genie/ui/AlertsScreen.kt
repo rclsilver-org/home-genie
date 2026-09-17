@@ -152,12 +152,17 @@ fun AlertsScreen(serverUrl: String, token: String, onOpen: (AlertPayload) -> Uni
     // whose order changes when one acknowledges makes the rows jump under the
     // thumb, and the one being looked at is lost.
 
+    // Computed once for the whole list: a row cannot tell on its own whether
+    // what it is about to print also appears on the nineteen below it.
+    val facets = facetsOf(alerts)
+
     alerts.forEach { alert ->
         // Keyed by alert: without it, an alert leaving the list would
         // bequeath its open drawer to whichever takes its place.
         key(alert.id) {
             AlertRow(
                 alert = alert,
+                facets = facets,
                 // One drawer open at a time: two gaping rows make one lose
                 // track of which one was about to be acknowledged.
                 revealed = revealed == alert.id,
@@ -215,6 +220,7 @@ private val ACTION_WIDTH = 94.dp
 @Composable
 private fun AlertRow(
     alert: AlertPayload,
+    facets: Facets,
     revealed: Boolean,
     onReveal: (Boolean) -> Unit,
     onOpen: () -> Unit,
@@ -364,9 +370,14 @@ private fun AlertRow(
 
                     Text(
                         buildString {
-                            append(alert.channelSlug)
-                            append(" · ").append(relativeAge(alert.startedAt))
-                            alert.labels["instance"]?.let { append(" · ").append(it) }
+                            // Only what differs from the rows around it. On a
+                            // server with one alert channel the slug was the
+                            // same word twenty times over.
+                            if (facets.channel) append(alert.channelSlug).append(" · ")
+                            append(relativeAge(alert.startedAt))
+                            alert.labels["instance"]
+                                ?.removeSuffix(facets.sharedDomain)
+                                ?.let { append(" · ").append(it) }
                             // "nobody" rather than a blank: the absence of an
                             // owner is the information, not a missing field.
                             append(" · ").append(if (alert.isAcked) alert.ackedBy else "nobody")
@@ -384,7 +395,7 @@ private fun AlertRow(
                         // already says it, in the same colour, a centimetre
                         // away. The word itself is on the detail screen,
                         // where there is room to be precise.
-                        LabelChips(alert.labels, max = 3)
+                        LabelChips(alert.labels, facets.labels, max = 3)
                         OccurrencesBadge(alert.occurrences)
                     }
                 }

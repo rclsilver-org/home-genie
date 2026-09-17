@@ -98,7 +98,10 @@ fun AlertDetailScreen(serverUrl: String, token: String, alertId: Long) {
         style = MaterialTheme.typography.bodySmall,
     )
 
-    LabelChips(alert.labels, max = 6)
+    // On one alert there is no list to compare against, so nothing is
+    // hidden: every label shows, including the ones the list drops for
+    // being the same everywhere.
+    LabelChips(alert.labels, keys = alert.labels.keys, max = 6)
 
     // What broke, then what to do about it — both before the tabs. Everything
     // above this point identifies the alert; everything below it is reference
