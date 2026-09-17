@@ -1,4 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!--
+      The theme of the window itself: the background behind the Compose tree
+      and the system bars, not the application's colours — those live in
+      ui/Theme.kt. This only has to stop contradicting them, which pinned to
+      Light it did, framing a dark application in white for the length of a
+      launch.
+
+      Split across values/ and values-night/ rather than a DayNight parent:
+      the framework has no DayNight variant without an action bar, and pulling
+      in the Material views library for one style would be a dependency for
+      nothing.
+    -->
     <style name="Theme.HomeGenie" parent="android:Theme.Material.Light.NoActionBar" />
 </resources>

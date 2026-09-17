@@ -26,8 +26,16 @@ import io.github.rclsilver.home_genie.net.AlertPayload
 fun StatusBadge(alert: AlertPayload) {
     when {
         !alert.isOpen -> OutlinedBadge("RESOLVED")
-        alert.isAcked -> FilledBadge("TAKEN", MaterialTheme.colorScheme.secondary)
-        else -> FilledBadge("OPEN", MaterialTheme.colorScheme.error)
+        alert.isAcked -> FilledBadge(
+            "TAKEN",
+            MaterialTheme.colorScheme.secondary,
+            MaterialTheme.colorScheme.onSecondary,
+        )
+        else -> FilledBadge(
+            "OPEN",
+            MaterialTheme.colorScheme.error,
+            MaterialTheme.colorScheme.onError,
+        )
     }
 }
 
@@ -40,10 +48,12 @@ fun StatusBadge(alert: AlertPayload) {
 @Composable
 fun SeverityBadge(severity: String) {
     if (severity.isEmpty()) return
+    // `info` gets no colour of its own: it is the absence of a signal, and
+    // painting it would put three competing hues on one row.
     val colour = when (severity) {
         "critical" -> MaterialTheme.colorScheme.error
         "warning" -> MaterialTheme.colorScheme.tertiary
-        else -> MaterialTheme.colorScheme.outline
+        else -> null
     }
     OutlinedBadge(severity.uppercase(), colour)
 }
@@ -52,14 +62,17 @@ fun SeverityBadge(severity: String) {
 @Composable
 fun OccurrencesBadge(occurrences: Int) {
     if (occurrences <= 1) return
-    OutlinedBadge("×$occurrences", MaterialTheme.colorScheme.outline)
+    OutlinedBadge("×$occurrences")
 }
 
 @Composable
-private fun FilledBadge(text: String, colour: Color) {
+// The content colour travels with the fill rather than being assumed: the
+// badge is drawn on `error` in one case and on `secondary` in the other, and
+// a single hardcoded foreground only happened to be legible on both.
+private fun FilledBadge(text: String, colour: Color, onColour: Color) {
     Text(
         text = text,
-        color = MaterialTheme.colorScheme.onError,
+        color = onColour,
         style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.Bold,
         fontSize = 10.sp,
@@ -70,14 +83,19 @@ private fun FilledBadge(text: String, colour: Color) {
 }
 
 @Composable
-private fun OutlinedBadge(text: String, colour: Color = MaterialTheme.colorScheme.outline) {
+// A severity passes its own colour and wears it on both the border and the
+// text, because there the colour *is* the signal. A neutral badge does not:
+// `outline` is a colour for a line, and used as text it is barely legible on
+// a dark surface — the occurrence count had all but vanished.
+private fun OutlinedBadge(text: String, colour: Color? = null) {
+    val line = colour ?: MaterialTheme.colorScheme.outline
     Text(
         text = text,
-        color = colour,
+        color = colour ?: MaterialTheme.colorScheme.onSurfaceVariant,
         style = MaterialTheme.typography.labelSmall,
         fontSize = 10.sp,
         modifier = Modifier
-            .border(BorderStroke(1.dp, colour), RoundedCornerShape(4.dp))
+            .border(BorderStroke(1.dp, line), RoundedCornerShape(4.dp))
             .padding(horizontal = 6.dp, vertical = 2.dp),
     )
 }

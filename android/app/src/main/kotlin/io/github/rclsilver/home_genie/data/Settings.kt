@@ -25,12 +25,17 @@ class Settings(private val context: Context) {
         val token = stringPreferencesKey("token")
         val username = stringPreferencesKey("username")
         val lastSeq = longPreferencesKey("last_seq")
+        val theme = stringPreferencesKey("theme")
     }
 
     val serverUrl: Flow<String> = context.dataStore.data.map { it[Keys.serverUrl] ?: "" }
     val token: Flow<String> = context.dataStore.data.map { it[Keys.token] ?: "" }
     val username: Flow<String> = context.dataStore.data.map { it[Keys.username] ?: "" }
     val lastSeq: Flow<Long> = context.dataStore.data.map { it[Keys.lastSeq] ?: 0L }
+
+    // Survives a logout on purpose: which theme suits the screen has nothing
+    // to do with who is signed in.
+    val theme: Flow<String> = context.dataStore.data.map { it[Keys.theme] ?: "" }
 
     suspend fun serverUrlOnce(): String = serverUrl.first()
     suspend fun tokenOnce(): String = token.first()
@@ -42,6 +47,10 @@ class Settings(private val context: Context) {
             it[Keys.token] = token
             it[Keys.username] = username
         }
+    }
+
+    suspend fun saveTheme(choice: String) {
+        context.dataStore.edit { it[Keys.theme] = choice }
     }
 
     /** Advances the cursor. Never rewinds: a replay must not wind it back. */

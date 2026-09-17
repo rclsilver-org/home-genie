@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Follows the system, which is what the default choice does too. An
+      explicit Light or Dark chosen in the application still wins everywhere
+      the application paints; only the window behind it, briefly visible while
+      the activity starts, keeps the system's answer.
+    -->
+    <style name="Theme.HomeGenie" parent="android:Theme.Material.NoActionBar" />
+</resources>

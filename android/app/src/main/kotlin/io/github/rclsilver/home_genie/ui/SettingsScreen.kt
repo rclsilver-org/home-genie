@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -43,6 +44,30 @@ fun SettingsScreen(settings: Settings) {
     val username by settings.username.collectAsState(initial = "")
     val token by settings.token.collectAsState(initial = "")
     val state by ConnectionService.observedState.collectAsState()
+    val theme by settings.theme.collectAsState(initial = "")
+
+    Text("Appearance", style = MaterialTheme.typography.titleMedium)
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Theme", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val current = ThemeChoice.of(theme)
+                ThemeChoice.entries.forEach { candidate ->
+                    FilterChip(
+                        selected = candidate == current,
+                        onClick = { scope.launch { settings.saveTheme(candidate.name) } },
+                        label = { Text(candidate.label) },
+                    )
+                }
+            }
+            // "System" is the default because it is the answer that keeps
+            // being right: the phone already knows about the night.
+            Text(
+                "System follows the phone, which already switches at dusk.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
 
     Text("Account", style = MaterialTheme.typography.titleMedium)
     Card(Modifier.fillMaxWidth()) {

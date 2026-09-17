@@ -9,7 +9,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,6 +19,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import io.github.rclsilver.home_genie.data.Settings
 import io.github.rclsilver.home_genie.ui.AppScreen
+import io.github.rclsilver.home_genie.ui.HomeGenieTheme
+import io.github.rclsilver.home_genie.ui.ThemeChoice
 import io.github.rclsilver.home_genie.ui.completeOidcLogin
 
 class MainActivity : ComponentActivity() {
@@ -39,7 +42,11 @@ class MainActivity : ComponentActivity() {
 
         val settings = Settings(applicationContext)
         setContent {
-            MaterialTheme {
+            // Read here rather than deeper down: the theme wraps the whole tree,
+            // so a screen cannot pick its own and end up disagreeing with the
+            // bar above it.
+            val stored by settings.theme.collectAsState(initial = "")
+            HomeGenieTheme(ThemeChoice.of(stored)) {
                 AppScreen(settings = settings)
             }
         }
