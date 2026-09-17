@@ -475,6 +475,7 @@ suspend fun fetchAlertsFiltered(
     unackedOnly: Boolean = false,
     closedOnly: Boolean = false,
     severity: String = "",
+    limit: Int = 0,
 ): Result<List<AlertPayload>> = withContext(Dispatchers.IO) {
     apiCatching {
         val params = buildList {
@@ -482,6 +483,7 @@ suspend fun fetchAlertsFiltered(
             if (unackedOnly) add("unacked=1")
             if (closedOnly) add("closed=1")
             if (severity.isNotEmpty()) add("severity=$severity")
+            if (limit > 0) add("limit=$limit")
         }
         val suffix = if (params.isEmpty()) "" else "?" + params.joinToString("&")
         get(serverUrl, token, "/api/v1/alerts$suffix") { text ->

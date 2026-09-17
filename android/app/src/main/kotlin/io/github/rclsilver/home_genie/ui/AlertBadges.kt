@@ -3,6 +3,8 @@ package io.github.rclsilver.home_genie.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -40,6 +42,17 @@ fun StatusBadge(alert: AlertPayload) {
 }
 
 /**
+ * The colour a severity is entitled to, shared by the badge and the stripe
+ * down the side of a row so the two can never disagree.
+ */
+@Composable
+fun severityColour(severity: String): Color = when (severity) {
+    "critical" -> MaterialTheme.colorScheme.error
+    "warning" -> MaterialTheme.colorScheme.tertiary
+    else -> MaterialTheme.colorScheme.outline
+}
+
+/**
  * The Alertmanager severity as it is, not translated into P1–P5.
  *
  * It is the vocabulary of the Prometheus rules and of the monitoring stack;
@@ -48,14 +61,36 @@ fun StatusBadge(alert: AlertPayload) {
 @Composable
 fun SeverityBadge(severity: String) {
     if (severity.isEmpty()) return
-    // `info` gets no colour of its own: it is the absence of a signal, and
-    // painting it would put three competing hues on one row.
-    val colour = when (severity) {
-        "critical" -> MaterialTheme.colorScheme.error
-        "warning" -> MaterialTheme.colorScheme.tertiary
-        else -> null
-    }
+    // `info` gets no colour of its own on the badge: it is the absence of a
+    // signal, and painting it would put three competing hues on one row.
+    val colour = if (severity == "critical" || severity == "warning") {
+        severityColour(severity)
+    } else null
     OutlinedBadge(severity.uppercase(), colour)
+}
+
+/**
+ * The labels already spoken for elsewhere on a row: the alert name is the
+ * title, the severity has its own badge, the instance sits on the meta line,
+ * and `job` is not something anyone acts on.
+ */
+private val SPOKEN_FOR = setOf("alertname", "severity", "instance", "job")
+
+/**
+ * What an alert carries beyond the usual labels — `service`, `source`, and
+ * whatever the rule chose to attach. That is the part which differs between
+ * two alerts sharing a name, so it is the part worth the width.
+ */
+@Composable
+fun LabelChips(labels: Map<String, String>, max: Int = 3) {
+    val extra = labels
+        .filterKeys { it !in SPOKEN_FOR }
+        .entries.sortedBy { it.key }
+        .take(max)
+    if (extra.isEmpty()) return
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        extra.forEach { OutlinedBadge(it.value) }
+    }
 }
 
 /** "x4": the number of deliveries from Alertmanager. */
@@ -86,7 +121,7 @@ private fun FilledBadge(text: String, colour: Color, onColour: Color) {
 // A severity passes its own colour and wears it on both the border and the
 // text, because there the colour *is* the signal. A neutral badge does not:
 // `outline` is a colour for a line, and used as text it is barely legible on
-// a dark surface — the occurrence count had all but vanished.
+// a dark surface — the occurrence count and the labels had all but vanished.
 private fun OutlinedBadge(text: String, colour: Color? = null) {
     val line = colour ?: MaterialTheme.colorScheme.outline
     Text(
