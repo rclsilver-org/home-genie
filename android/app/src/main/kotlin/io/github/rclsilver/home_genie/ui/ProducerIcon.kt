@@ -1,5 +1,6 @@
 package io.github.rclsilver.home_genie.ui
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -75,9 +76,7 @@ object IconCache {
         }
 
         val image = fetchProducerIcon(serverUrl, token, producerId)
-            .mapCatching { bytes ->
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-            }
+            .mapCatching { bytes -> decodeScaled(bytes)?.asImageBitmap() }
             .getOrNull()
 
         lock.withLock { decoded[producerId] = image }
@@ -196,3 +195,40 @@ private fun logoGround(): Color =
  * one with a little air around it and is none the worse.
  */
 private val LOGO_SHAPE = RoundedCornerShape(12.dp)
+
+/**
+ * How wide a decoded icon is allowed to be.
+ *
+ * Comfortably more than the badge needs at any screen density, and far less
+ * than what an image may legitimately arrive at.
+ */
+private const val TARGET_PIXELS = 256
+
+/**
+ * Decodes an icon no larger than it needs to be.
+ *
+ * The server accepts any image under its size limit, and a compressed PNG
+ * says nothing about how much memory it becomes: Prometheus publishes its
+ * flame at 1800×1800, which is 52 kB on the wire and close to thirteen
+ * megabytes once decoded — for a badge drawn at forty-two points.
+ *
+ * So the bounds are read first and the decoder is told to sample down. A
+ * picture already at the right size is untouched, since the loop only ever
+ * halves while the result would still be large enough.
+ */
+private fun decodeScaled(bytes: ByteArray): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+
+    var sample = 1
+    while (bounds.outWidth / (sample * 2) >= TARGET_PIXELS &&
+        bounds.outHeight / (sample * 2) >= TARGET_PIXELS
+    ) {
+        sample *= 2
+    }
+
+    return BitmapFactory.decodeByteArray(
+        bytes, 0, bytes.size,
+        BitmapFactory.Options().apply { inSampleSize = sample },
+    )
+}
