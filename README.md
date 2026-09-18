@@ -1,53 +1,117 @@
 # Home Genie
 
-A self-hosted notification server and its Android application, for a homelab.
+**A self-hosted alert console and notification feed for a homelab — one server, one
+Android application, no third party in the path.**
 
-Two things live in it, and they are not alike:
+Alertmanager posts straight to it. Everything already speaking ntfy keeps working by
+changing a URL. Nothing passes through Firebase, and nothing needs a bridge process.
 
-- **Alerts** have a lifecycle. Alertmanager opens them, somebody takes them, they
-  remind as long as nobody deals with them, and they close when the condition goes
-  away. They concern everyone at once.
-- **Notifications** are a feed. The media tools, the image watcher, a script: they
-  announce a fact already accomplished. Each person reads them for themselves, and one
-  person's "read" state changes nothing for the others.
+| Dashboard | Alerts | Notifications |
+|---|---|---|
+| ![Dashboard](docs/images/dashboard.png) | ![Alerts](docs/images/alerts.png) | ![Notifications](docs/images/notifications.png) |
 
-The project replaces an ntfy paired with an ntfy-alertmanager bridge, where an alert
-was just one more message and acknowledgement did not exist.
+## Why it exists
 
-## What it does
+The setup it replaces was an ntfy paired with an `ntfy-alertmanager` bridge. It worked,
+and it had two problems that no amount of configuration would fix.
 
-**On the alert side.** Native ingest of the Alertmanager v4 webhook, with dedup on the
-`fingerprint`: an alert re-delivered forty times stays one alert, whose occurrences are
-counted. Local acknowledgement — nothing is written back to Alertmanager, so the usual
-dashboards keep showing it and the phone never writes into the chain it watches.
-Reminders at a cadence chosen per severity, overridable per channel. A timeline per
-alert: opening, notifications, reminders, repeats, acknowledgement, resolution.
+**An alert was just another message.** It arrived, it scrolled past, and that was the
+end of it. There was no way to say "I have seen this, stop reminding me", no way to know
+whether anyone had, and no record of what had happened to it. A disk filling up and a
+film finishing downloading were the same kind of object.
 
-**On the notification side.** **ntfy-compatible** publishing: the `Title`, `Priority`,
-`Tags` and `Click` headers and the JSON body are accepted as they are, so a producer
-already configured for ntfy changes only its URL and its token. A "read" state per
-user, and a delivery timeline per message — who it was sent to, on which device, when
-it was received and read.
+**There was a bridge in the middle.** A second process to install, configure, keep
+running and debug, whose only job was to translate one format into another.
 
-**Silence.** Two distinct mechanisms, and the difference matters:
+Home Genie removes both. Alerts are a first-class object with a lifecycle, and the two
+formats are understood natively — by the same server, on the same port.
+
+## Two ingests, no bridge
+
+### Alertmanager, natively
+
+The v4 webhook posts straight in. Alerts are deduplicated on their `fingerprint`, so one
+re-delivered forty times stays one alert with forty occurrences counted — not forty
+lines in the shade.
+
+```yaml
+receivers:
+  - name: home-genie
+    webhook_configs:
+      - url: https://alerts.example.net/api/v1/ingest/alertmanager/alerts
+        http_config:
+          authorization: { type: Bearer, credentials: "<publish token>" }
+```
+
+Acknowledgement is **local**: nothing is written back to Alertmanager, so the usual
+dashboards keep showing what is firing and the phone never writes into the chain it is
+watching. What stops is the reminders, and the acknowledgement carries the name of
+whoever took it.
+
+### ntfy, as it already is
+
+The publish format is understood as it comes: the `Title`, `Priority`, `Tags` and
+`Click` headers, the JSON body, and the query-string form — which is the one the *arr
+suite actually sends, and the one an ntfy-compatible server is easy to forget.
+
+Migrating a producer is a URL and a token:
+
+```diff
+- url: https://ntfy.example.net/homelab
++ url: https://alerts.example.net/notifications
+```
+
+Nothing else in Sonarr, Radarr, diun or a shell script has to change. Markdown in a
+body — which diun sends and ntfy never rendered — is understood: bold reads as bold, and
+the link diun buries in its sentence becomes a button.
+
+## Alerts and notifications are two different objects
+
+Mixing them forces each to borrow the other's vocabulary, so they are kept apart.
+
+| | Alerts | Notifications |
+|---|---|---|
+| **Comes from** | Alertmanager, an Icinga bridge | the media tools, an image watcher, a script |
+| **Lifecycle** | opens, is taken, reminds, closes | arrives, is read |
+| **Read state** | shared — one person takes it for everyone | personal — yours changes nothing for the others |
+| **Reminds** | yes, at a cadence per severity | never |
+
+The alert console tells you what is open, who has taken it, and what has been quiet all
+week. The feed is a list to be emptied — a full swipe left marks one read, and a tap
+opens it, because these carry links and bodies too long for a list.
+
+## What else is in it
+
+**Every producer wears its own face.** A publish token is one per software, so it *is*
+the producer's identity: give it the Sonarr logo and every notification Sonarr sends
+arrives wearing it. Upload one from the application; it is stored on your server, served
+by your server, and nothing is fetched from anywhere else.
+
+**Silence, in two flavours that are not the same thing.**
 
 | | Effect | Scope | What is lost |
 |---|---|---|---|
-| **Quiet hours** | the notification arrives without noise | global, overridable per channel and per severity | nothing — a reminder comes back at the end of the window |
+| **Quiet hours** | the notification arrives without noise | global, overridable per channel and per severity | nothing — a reminder comes back when the window closes |
 | **Mute** | no notification at all | yours alone, every channel, bounded in time | the notifications of that period |
 
-A quiet window that does not name a severity **never** covers a critical alert:
-silencing one is legitimate on a homelab, but it is asked for by naming `critical`,
-not inherited from a setting meant for downloads.
+A quiet window that does not name a severity **never** covers a critical alert.
+Silencing one is legitimate on a homelab — a disk filling up at three in the morning can
+wait until seven — but it is asked for by naming `critical`, not inherited from a
+setting meant for downloads.
 
-A mute, on the other hand, goes above everything — criticals included — but it
-silences only the person who sets it. It is a deliberate and personal gesture: "be
-quiet, I am the one making the noise". The other members keep being notified, and do
-not even see that somebody went quiet.
+A mute goes above everything, criticals included, but it silences only the person who
+sets it: "be quiet, I am the one making the noise". The other members keep being
+notified and do not even see that somebody went quiet.
 
-**Channels and rights.** A channel carries members (read, publish, administer),
-publish tokens — one per producer, revocable without touching the others — and its own
-reminder cadences.
+**Channels and rights.** A channel carries members (read, publish, administer), publish
+tokens — one per producer, revocable without touching the others — and its own reminder
+cadences.
+
+**It tells you when it cannot do its job.** The dashboard raises a warning only when a
+system setting is genuinely missing: battery optimisation exemption, notification
+permission, Do Not Disturb access. When everything is in order, it says nothing — and
+when a socket is down it says so, because the absence of alerts otherwise looks exactly
+like calm.
 
 ## How it works
 
@@ -60,12 +124,12 @@ scripts      ─┘      │
 
 The phone keeps an **open socket** in a foreground service. Every event carries a
 monotonic sequence number; on reconnection the client asks for what follows the last
-number it received, so an outage only costs time, never a message. An application
-heartbeat crosses the socket in both directions: the server knows a device is still
-listening, which an open TCP socket does not prove.
+number it received, so an outage costs time, never a message. An application heartbeat
+crosses the socket in both directions: the server knows a device is still listening,
+which an open TCP socket does not prove.
 
-No FCM: notifications pass through no third party, and the server is not reachable
-from the outside to emit them.
+No FCM. Notifications pass through no third party, and the server does not need to be
+reachable from the outside to emit them.
 
 ## Installing
 
@@ -97,10 +161,6 @@ The APK is published with each release. It installs by sideload: on first launch
 the server URL, then sign in — with the break-glass account, or through OIDC if one is
 configured.
 
-The home screen only shows a warning when a system setting is genuinely missing:
-battery optimisation exemption, notification permission, Do Not Disturb access. When
-everything is in order, it says nothing.
-
 ## Authentication
 
 Two paths, for two situations:
@@ -121,11 +181,6 @@ only its SHA-256 fingerprint; the cleartext token appears once.
 battery arbitration. A night of continuous observation settled it: the socket held for
 7 h 56 without interruption under a vendor Android skin. FCM stays a way out if the
 figures degrade, not a prerequisite.
-
-**Alerts and notifications are two objects.** A notification is read or unread, per
-person, and nothing else ever happens to it. An alert opens, is taken, reminds and
-closes, for everyone at once. Mixing them forced each to borrow the other's
-vocabulary.
 
 **Two channels are enough.** Splitting `alerts-critical` / `alerts-warning` re-encodes
 in the channel what the alert already carries — its `severity` label — and everything
