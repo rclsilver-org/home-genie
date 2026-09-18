@@ -183,10 +183,6 @@ fun AlertsScreen(serverUrl: String, token: String, onOpen: (AlertPayload) -> Uni
     }
 }
 
-/** The corner the whole row is cut to — clip and outline read it alike. */
-private val ROW_RADIUS = 12.dp
-private val ROW_SHAPE = RoundedCornerShape(ROW_RADIUS)
-
 /**
  * The height shared by every row, sized to the three lines it now holds.
  *

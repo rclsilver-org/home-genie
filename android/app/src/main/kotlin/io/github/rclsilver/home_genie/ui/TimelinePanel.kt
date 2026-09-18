@@ -72,8 +72,12 @@ fun TimelinePanel(messageId: Long, serverUrl: String, token: String) {
         entries.forEach { entry ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                // The left side takes what is left and wraps inside it. A
+                // device name long enough to reach the timestamp used to push
+                // it into the middle of the sentence, where it read as part
+                // of the device name.
                 Text(
                     buildString {
                         append(LABELS[entry.kind] ?: entry.kind)
@@ -81,8 +85,14 @@ fun TimelinePanel(messageId: Long, serverUrl: String, token: String) {
                         if (entry.device.isNotEmpty()) append(" · ").append(entry.device)
                     },
                     style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f),
                 )
-                Text(format(entry.at), style = MaterialTheme.typography.bodySmall)
+                Text(
+                    format(entry.at),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
             }
         }
 

@@ -55,6 +55,7 @@ import io.github.rclsilver.home_genie.data.Settings
 import io.github.rclsilver.home_genie.MainActivity
 import io.github.rclsilver.home_genie.net.ApiClient
 import io.github.rclsilver.home_genie.net.ChannelPayload
+import io.github.rclsilver.home_genie.net.MessagePayload
 import io.github.rclsilver.home_genie.net.createChannel
 import io.github.rclsilver.home_genie.net.CreateChannelRequest
 import io.github.rclsilver.home_genie.net.deleteChannel
@@ -87,6 +88,9 @@ fun AppScreen(settings: Settings) {
     // The open alert, if any: the console and the detail are the same
     // section, not two destinations.
     var openAlert by remember { mutableStateOf<Long?>(null) }
+    // The message itself and not its id: there is no endpoint to fetch one
+    // back, and the list already holds it.
+    var openMessage by remember { mutableStateOf<MessagePayload?>(null) }
     var destination by remember { mutableStateOf(Destination.OVERVIEW) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
 
@@ -142,6 +146,7 @@ fun AppScreen(settings: Settings) {
                 // would later land back on a channel believed to be left.
                 openChannel = null
                 openAlert = null
+                openMessage = null
                 scope.launch { drawerState.close() }
             }
         },
@@ -153,8 +158,10 @@ fun AppScreen(settings: Settings) {
                 // with back rather than with a button dropped in the page.
                 val openedChannel = openChannel
                 val openedAlert = openAlert
+                val openedMessage = openMessage
                 val nested = openedChannel != null ||
-                    (destination == Destination.ALERTS && openedAlert != null)
+                    (destination == Destination.ALERTS && openedAlert != null) ||
+                    (destination == Destination.NOTIFICATIONS && openedMessage != null)
                 TopAppBar(
                     title = {
                         Text(
@@ -162,13 +169,17 @@ fun AppScreen(settings: Settings) {
                                 openedChannel != null -> openedChannel.slug
                                 openedAlert != null && destination == Destination.ALERTS ->
                                     "Alert #$openedAlert"
+                                openedMessage != null &&
+                                    destination == Destination.NOTIFICATIONS -> "Notification"
                                 else -> destination.label
                             }
                         )
                     },
                     navigationIcon = {
                         if (nested) {
-                            IconButton(onClick = { openChannel = null; openAlert = null }) {
+                            IconButton(onClick = {
+                                openChannel = null; openAlert = null; openMessage = null
+                            }) {
                                 Icon(
                                     Icons.AutoMirrored.Filled.ArrowBack,
                                     contentDescription = "Back",
@@ -212,8 +223,14 @@ fun AppScreen(settings: Settings) {
                             AlertDetailScreen(serverUrl, token, opened)
                         }
                     }
-                    destination == Destination.NOTIFICATIONS ->
-                        NotificationsScreen(serverUrl, token)
+                    destination == Destination.NOTIFICATIONS -> {
+                        val opened = openMessage
+                        if (opened == null) {
+                            NotificationsScreen(serverUrl, token) { openMessage = it }
+                        } else {
+                            NotificationDetailScreen(opened, serverUrl, token)
+                        }
+                    }
                     destination == Destination.CHANNELS ->
                         ChannelsScreen(settings) { openChannel = it }
                     destination == Destination.SETTINGS -> SettingsScreen(settings)

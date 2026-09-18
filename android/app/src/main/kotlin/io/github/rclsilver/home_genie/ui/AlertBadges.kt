@@ -93,6 +93,30 @@ fun LabelChips(labels: Map<String, String>, keys: Set<String>, max: Int = 3) {
     }
 }
 
+/**
+ * The corner every list row is cut to, and the shape that clips it.
+ *
+ * Shared so the two feeds round the same way: a row is a row, whether it
+ * holds an alert or a notification, and clip and outline must read it alike.
+ */
+val ROW_RADIUS = 12.dp
+val ROW_SHAPE = RoundedCornerShape(ROW_RADIUS)
+
+/**
+ * A notification's tags, in the same pills the alerts wear.
+ *
+ * They were a comma-joined sentence before, which read as prose and lined up
+ * with nothing; two feeds side by side should not need two vocabularies for
+ * the same idea.
+ */
+@Composable
+fun TagChips(tags: List<String>, max: Int = 3) {
+    if (tags.isEmpty()) return
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        tags.take(max).forEach { OutlinedBadge(it) }
+    }
+}
+
 /** "x4": the number of deliveries from Alertmanager. */
 @Composable
 fun OccurrencesBadge(occurrences: Int) {

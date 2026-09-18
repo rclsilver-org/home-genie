@@ -28,6 +28,10 @@ data class MessagePayload(
     // acknowledge, and the server would refuse the gesture.
     @SerialName("alert_resolved") val alertResolved: Boolean = false,
     val read: Boolean = false,
+    // The server has always sent this; the field was simply not declared
+    // here, so `ignoreUnknownKeys` dropped it and the feed showed messages
+    // with no time at all — two minutes old and two days old looked alike.
+    @SerialName("created_at") val createdAt: String = "",
 )
 
 /** Payload of a `messages.read` event, sent by my other devices. */
