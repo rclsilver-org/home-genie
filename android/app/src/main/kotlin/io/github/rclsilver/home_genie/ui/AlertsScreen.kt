@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
@@ -184,15 +185,6 @@ fun AlertsScreen(serverUrl: String, token: String, onOpen: (AlertPayload) -> Uni
 }
 
 /**
- * The height shared by every row, sized to the three lines it now holds.
- *
- * Kept fixed rather than left to the content: a list whose rows rise and fall
- * with the length of each summary is read badly, and at three in the morning
- * one counts alerts at a glance without reading them.
- */
-private val ROW_HEIGHT = 94.dp
-
-/**
  * The width of the drawer revealed by the swipe.
  *
  * Sized for a real button rather than a line of text. A tappable label with
@@ -240,10 +232,16 @@ private fun AlertRow(
     else MaterialTheme.colorScheme.outline
     val outline = MaterialTheme.colorScheme.outline
 
+    // The height follows the content, and therefore the reader's font size.
+    // It was pinned at 94dp, measured at a scale of 1.0; at 1.15 — which is
+    // what a Samsung ships with — the three lines no longer fit and the tags
+    // were sliced in half. Every line here is already capped at one, so the
+    // rows stay as even as the fixed height made them, without ignoring a
+    // setting somebody chose in order to be able to read.
     Box(
         Modifier
             .fillMaxWidth()
-            .height(ROW_HEIGHT)
+            .height(IntrinsicSize.Min)
             // The rounded corners and the outline belong to the row, not to
             // the card sliding inside it. Giving each of them its own shape
             // meant two shapes had to agree on where the row ended, and for
@@ -329,7 +327,7 @@ private fun AlertRow(
             shape = RectangleShape,
             onClick = { if (revealed) onReveal(false) else onOpen() },
         ) {
-            Row(Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
                 // Severity as a stripe rather than a fill. Eight open alerts
                 // painted the whole screen red, and a list where every row
                 // shouts ranks nothing — which is the one thing this screen
