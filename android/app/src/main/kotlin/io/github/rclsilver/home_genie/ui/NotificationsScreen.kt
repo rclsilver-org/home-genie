@@ -15,7 +15,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -43,7 +42,6 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import io.github.rclsilver.home_genie.net.fetchFeed
-import io.github.rclsilver.home_genie.net.markFeedRead
 import io.github.rclsilver.home_genie.net.markRead
 import io.github.rclsilver.home_genie.net.MessagePayload
 import io.github.rclsilver.home_genie.service.ConnectionService
@@ -102,11 +100,6 @@ fun NotificationsScreen(
             onClick = { unreadOnly = false },
             label = { Text("All  ${count(all.size)}") },
         )
-        if (unread.isNotEmpty()) {
-            TextButton(onClick = {
-                scope.launch { markFeedRead(serverUrl, token).onSuccess { reloads++ } }
-            }) { Text("Mark all read") }
-        }
     }
 
     if (error.isNotEmpty()) {

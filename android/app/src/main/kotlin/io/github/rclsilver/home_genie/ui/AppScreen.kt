@@ -26,6 +26,8 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -34,6 +36,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -56,6 +59,7 @@ import io.github.rclsilver.home_genie.MainActivity
 import io.github.rclsilver.home_genie.net.ApiClient
 import io.github.rclsilver.home_genie.net.ChannelPayload
 import io.github.rclsilver.home_genie.net.MessagePayload
+import io.github.rclsilver.home_genie.net.markFeedRead
 import io.github.rclsilver.home_genie.net.createChannel
 import io.github.rclsilver.home_genie.net.CreateChannelRequest
 import io.github.rclsilver.home_genie.net.deleteChannel
@@ -174,6 +178,38 @@ fun AppScreen(settings: Settings) {
                                 else -> destination.label
                             }
                         )
+                    },
+                    actions = {
+                        // Only on the feed, and not on a message opened from it:
+                        // an action that empties the whole list has no place
+                        // above one of its rows.
+                        if (destination == Destination.NOTIFICATIONS && openedMessage == null) {
+                            var menuOpen by remember { mutableStateOf(false) }
+                            IconButton(onClick = { menuOpen = true }) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "More")
+                            }
+                            DropdownMenu(
+                                expanded = menuOpen,
+                                onDismissRequest = { menuOpen = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Mark all read") },
+                                    // Nothing to mark is not something to hide:
+                                    // a button that comes and goes makes the bar
+                                    // jump, and a menu that opens onto nothing
+                                    // is worse than one offering a grey line.
+                                    enabled = unread > 0,
+                                    onClick = {
+                                        menuOpen = false
+                                        // No local reload: the server tells this
+                                        // user's devices, and this one is among
+                                        // them, so the feed refreshes down the
+                                        // same path that syncs the others.
+                                        scope.launch { markFeedRead(serverUrl, token) }
+                                    },
+                                )
+                            }
+                        }
                     },
                     navigationIcon = {
                         if (nested) {
