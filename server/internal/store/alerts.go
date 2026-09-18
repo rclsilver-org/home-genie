@@ -497,3 +497,152 @@ func (s *Store) UnackAlert(id int64) (bool, error) {
 	affected, _ := result.RowsAffected()
 	return affected > 0, nil
 }
+
+// HistoryBucket is one slice of the alert history: how many alerts started
+// within it, and how many of those were critical.
+type HistoryBucket struct {
+	At       time.Time
+	Total    int
+	Critical int
+}
+
+// HistoryLimits bound what a caller may ask of the history.
+//
+// A window of a month and ninety-six slices is far past anything a phone can
+// draw legibly; the point is only that a mistyped query cannot ask the
+// database to group a decade into ten thousand columns.
+const (
+	MinHistoryBuckets = 4
+	MaxHistoryBuckets = 96
+	MaxHistoryWindow  = 30 * 24 * time.Hour
+)
+
+// AlertHistoryFor returns how many alerts opened per slice of time over the
+// window ending now, across the channels the user belongs to.
+//
+// Counted in the database rather than by handing the rows over and letting
+// the caller add them up. The listing endpoints are capped, and a chart built
+// from a capped list stops growing without saying so — the very failure the
+// filter counts had to work around. Here the aggregation is the answer, so
+// volume changes the cost and never the result.
+//
+// Empty slices come back as zeros rather than being left out. A chart has to
+// draw the quiet hours, and a caller filling the gaps itself would be a
+// second place for the arithmetic to go wrong.
+func (s *Store) AlertHistoryFor(
+	userID int64, window time.Duration, buckets int,
+) ([]HistoryBucket, error) {
+	if buckets < MinHistoryBuckets {
+		buckets = MinHistoryBuckets
+	}
+	if buckets > MaxHistoryBuckets {
+		buckets = MaxHistoryBuckets
+	}
+	if window <= 0 || window > MaxHistoryWindow {
+		window = MaxHistoryWindow
+	}
+
+	width := window / time.Duration(buckets)
+	if width <= 0 {
+		return nil, fmt.Errorf("a window of %s cannot be cut into %d", window, buckets)
+	}
+	// Aligned on the slice width so the columns do not shift under the chart
+	// between two refreshes a few seconds apart — but rounded *up*, so the
+	// last slice is the one in progress. Truncating alone put the end of the
+	// window as much as one slice in the past, which dropped the alerts that
+	// opened since: the most recent ones, and the reason anyone looks.
+	end := s.now().UTC().Truncate(width).Add(width)
+	start := end.Add(-window)
+
+	counted := make([]HistoryBucket, buckets)
+	for i := range counted {
+		counted[i] = HistoryBucket{At: start.Add(time.Duration(i) * width)}
+	}
+
+	rows, err := s.db.Query(
+		`SELECT CAST((julianday(a.started_at) - julianday(?)) * 86400 / ? AS INTEGER) AS slice,
+		        COUNT(*),
+		        SUM(CASE WHEN a.severity = ? THEN 1 ELSE 0 END)
+		   FROM alerts a
+		   JOIN channel_members m ON m.channel_id = a.channel_id AND m.user_id = ?
+		  WHERE a.started_at >= ? AND a.started_at < ?
+		  GROUP BY slice`,
+		start.Format(time.RFC3339), int64(width.Seconds()), SeverityCritical, userID,
+		start.Format(time.RFC3339), end.Format(time.RFC3339))
+	if err != nil {
+		return nil, fmt.Errorf("counting the alert history: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var slice, total, critical int
+		if err := rows.Scan(&slice, &total, &critical); err != nil {
+			return nil, fmt.Errorf("reading a slice: %w", err)
+		}
+		// A row landing outside is a clock that moved between the bounds and
+		// the grouping, not something to drop the whole answer for.
+		if slice >= 0 && slice < buckets {
+			counted[slice].Total = total
+			counted[slice].Critical = critical
+		}
+	}
+	return counted, rows.Err()
+}
+
+// LabelCount is one row of the ranking: a label's value and how often it
+// appeared over the window.
+type LabelCount struct {
+	Value string
+	Total int
+}
+
+// TopAlertLabelsFor ranks the values of one label over a window, across the
+// channels the user belongs to.
+//
+// Counted in the database for the same reason as the history: a ranking built
+// from the capped listing would quietly become "the top of the last two
+// hundred", and it would start lying exactly during the incident storm that
+// makes anyone open it.
+//
+// Alerts carrying no such label are left out rather than grouped under an
+// empty name. "What breaks most" has no answer for a row that does not say
+// what it is, and a blank leading the ranking would only look like a bug.
+func (s *Store) TopAlertLabelsFor(
+	userID int64, label string, window time.Duration, limit int,
+) ([]LabelCount, error) {
+	if label == "" {
+		return nil, fmt.Errorf("a label is required")
+	}
+	if limit <= 0 || limit > 50 {
+		limit = 5
+	}
+	if window <= 0 || window > MaxHistoryWindow {
+		window = MaxHistoryWindow
+	}
+	since := s.now().UTC().Add(-window).Format(time.RFC3339)
+
+	// The labels are a JSON object in the row; SQLite reads one out without
+	// the server having to decode every alert to count them.
+	rows, err := s.db.Query(
+		`SELECT json_extract(a.labels, '$.' || ?) AS value, COUNT(*) AS total
+		   FROM alerts a
+		   JOIN channel_members m ON m.channel_id = a.channel_id AND m.user_id = ?
+		  WHERE a.started_at >= ? AND value IS NOT NULL AND value <> ''
+		  GROUP BY value
+		  ORDER BY total DESC, value ASC
+		  LIMIT ?`, label, userID, since, limit)
+	if err != nil {
+		return nil, fmt.Errorf("ranking the alerts: %w", err)
+	}
+	defer rows.Close()
+
+	ranked := []LabelCount{}
+	for rows.Next() {
+		var entry LabelCount
+		if err := rows.Scan(&entry.Value, &entry.Total); err != nil {
+			return nil, fmt.Errorf("reading a rank: %w", err)
+		}
+		ranked = append(ranked, entry)
+	}
+	return ranked, rows.Err()
+}

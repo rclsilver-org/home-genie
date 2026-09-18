@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/rclsilver-org/home-genie/server/internal/store"
 )
@@ -715,5 +717,192 @@ func TestTheResolutionMessageIsMarkedAndStaysQuiet(t *testing.T) {
 	if closed.Priority != store.PriorityMin {
 		t.Fatalf("a closure must stay quiet: priority %d, want %d",
 			closed.Priority, store.PriorityMin)
+	}
+}
+
+// startedAt returns a firing alert that opened at a given moment, which is
+// what the history groups on.
+func startedAt(fingerprint, severity string, at time.Time) alertmanagerAlert {
+	alert := firing(fingerprint, severity)
+	alert.StartsAt = at.UTC().Format(time.RFC3339)
+	return alert
+}
+
+// The chart's whole reason for existing on the server: the listing endpoints
+// are capped, so counting there would flatten a busy week without saying so.
+func TestTheHistoryCountsAlertsIntoSlicesOfTime(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	session := session(t, server, "thomas", testPassword)
+	_, publishToken := issueChannelAndToken(t, repository, "infra")
+
+	now := time.Now().UTC()
+	if r := webhook(t, server, "infra", publishToken, alertmanagerWebhook{
+		Version: "4", Status: store.AlertFiring,
+		Alerts: []alertmanagerAlert{
+			// Two in the most recent hour, one of them critical.
+			startedAt("a", store.SeverityCritical, now.Add(-20*time.Minute)),
+			startedAt("b", "warning", now.Add(-30*time.Minute)),
+			// One three days back, which must land in another slice.
+			startedAt("c", "warning", now.Add(-72*time.Hour)),
+			// One older than the window, which must not be counted at all.
+			startedAt("d", "warning", now.Add(-40*24*time.Hour)),
+		},
+	}); r.Code != http.StatusOK {
+		t.Fatalf("ingesting: %d %s", r.Code, r.Body)
+	}
+
+	history := decode[[]historyBucketPayload](t, call(t, server, http.MethodGet,
+		"/api/v1/alerts/history?hours=168&buckets=24", session, nil))
+
+	if len(history) != 24 {
+		t.Fatalf("%d slices, want 24 — empty ones must be returned, a chart has "+
+			"to draw the quiet hours", len(history))
+	}
+
+	total, critical, nonEmpty := 0, 0, 0
+	for _, slice := range history {
+		total += slice.Total
+		critical += slice.Critical
+		if slice.Total > 0 {
+			nonEmpty++
+		}
+	}
+	if total != 3 {
+		t.Fatalf("counted %d alerts, want 3 — the fortieth day is outside the window", total)
+	}
+	if critical != 1 {
+		t.Fatalf("counted %d critical, want 1", critical)
+	}
+	if nonEmpty != 2 {
+		t.Fatalf("%d slices hold something, want 2 — twenty minutes and thirty "+
+			"belong together, three days back does not", nonEmpty)
+	}
+
+	// The columns are in order and evenly spaced, or the chart draws time
+	// backwards without anybody noticing.
+	width := history[1].At.Sub(history[0].At)
+	for i := 1; i < len(history); i++ {
+		if gap := history[i].At.Sub(history[i-1].At); gap != width {
+			t.Fatalf("slice %d is %s after the one before, want %s", i, gap, width)
+		}
+	}
+}
+
+// `history` is a literal segment and `{id}` a wildcard; the router must not
+// read the word as an alert number.
+func TestTheHistoryPathIsNotReadAsAnAlertID(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	session := session(t, server, "thomas", testPassword)
+
+	recorder := call(t, server, http.MethodGet, "/api/v1/alerts/history", session, nil)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body)
+	}
+	if body := recorder.Body.String(); !strings.HasPrefix(strings.TrimSpace(body), "[") {
+		t.Fatalf("the answer is not a list of slices: %s", body)
+	}
+}
+
+// Someone else's channels are none of the caller's business, here as anywhere.
+func TestTheHistoryOnlyCountsWhatTheCallerCanSee(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	withLocalAccount(t, repository, "claire", testPassword)
+	_, publishToken := issueChannelAndToken(t, repository, "infra")
+
+	if r := webhook(t, server, "infra", publishToken, alertmanagerWebhook{
+		Version: "4", Status: store.AlertFiring,
+		Alerts: []alertmanagerAlert{startedAt("a", "warning", time.Now().Add(-time.Hour))},
+	}); r.Code != http.StatusOK {
+		t.Fatalf("ingesting: %d %s", r.Code, r.Body)
+	}
+
+	stranger := session(t, server, "claire", testPassword)
+	history := decode[[]historyBucketPayload](t, call(t, server, http.MethodGet,
+		"/api/v1/alerts/history", stranger, nil))
+
+	for _, slice := range history {
+		if slice.Total != 0 {
+			t.Fatal("a stranger to the channel sees its alerts in the history")
+		}
+	}
+}
+
+// A labelled alert, so the ranking has something to group on.
+func labelled(fingerprint, service string, at time.Time) alertmanagerAlert {
+	alert := startedAt(fingerprint, "warning", at)
+	alert.Labels["service"] = service
+	return alert
+}
+
+// The question the channel list cannot answer on a server where everything
+// arrives through one channel.
+func TestTheRankingCountsWhatBreaksMost(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	session := session(t, server, "thomas", testPassword)
+	_, publishToken := issueChannelAndToken(t, repository, "infra")
+
+	now := time.Now().UTC()
+	noService := startedAt("z", "warning", now.Add(-time.Hour))
+	delete(noService.Labels, "service")
+
+	if r := webhook(t, server, "infra", publishToken, alertmanagerWebhook{
+		Version: "4", Status: store.AlertFiring,
+		Alerts: []alertmanagerAlert{
+			labelled("a", "puppet-agent", now.Add(-time.Hour)),
+			labelled("b", "puppet-agent", now.Add(-2*time.Hour)),
+			labelled("c", "puppet-agent", now.Add(-3*time.Hour)),
+			labelled("d", "speedtest", now.Add(-4*time.Hour)),
+			// Outside the window, so it must not lift its service.
+			labelled("e", "speedtest", now.Add(-40*24*time.Hour)),
+			// No service at all: nothing to rank, and a blank leading the
+			// list would only look like a bug.
+			noService,
+		},
+	}); r.Code != http.StatusOK {
+		t.Fatalf("ingesting: %d %s", r.Code, r.Body)
+	}
+
+	ranked := decode[[]labelCountPayload](t, call(t, server, http.MethodGet,
+		"/api/v1/alerts/top?hours=168&limit=5", session, nil))
+
+	if len(ranked) != 2 {
+		t.Fatalf("ranked %d services, want 2: %+v", len(ranked), ranked)
+	}
+	if ranked[0].Value != "puppet-agent" || ranked[0].Total != 3 {
+		t.Fatalf("first = %+v, want puppet-agent ×3", ranked[0])
+	}
+	if ranked[1].Value != "speedtest" || ranked[1].Total != 1 {
+		t.Fatalf("second = %+v, want speedtest ×1 — the fortieth day is outside", ranked[1])
+	}
+}
+
+// Ranking another label must work, since which one varies depends on what
+// feeds the server.
+func TestTheRankingCanCountAnyLabel(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	session := session(t, server, "thomas", testPassword)
+	_, publishToken := issueChannelAndToken(t, repository, "infra")
+
+	if r := webhook(t, server, "infra", publishToken, alertmanagerWebhook{
+		Version: "4", Status: store.AlertFiring,
+		Alerts: []alertmanagerAlert{
+			labelled("a", "one", time.Now().Add(-time.Hour)),
+			labelled("b", "two", time.Now().Add(-time.Hour)),
+		},
+	}); r.Code != http.StatusOK {
+		t.Fatalf("ingesting: %d %s", r.Code, r.Body)
+	}
+
+	// Both carry alertname DiskFull, so ranking on it must collapse them.
+	ranked := decode[[]labelCountPayload](t, call(t, server, http.MethodGet,
+		"/api/v1/alerts/top?label=alertname", session, nil))
+
+	if len(ranked) != 1 || ranked[0].Value != "DiskFull" || ranked[0].Total != 2 {
+		t.Fatalf("ranked = %+v, want DiskFull ×2", ranked)
 	}
 }

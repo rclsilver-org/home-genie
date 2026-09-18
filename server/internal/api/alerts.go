@@ -582,3 +582,115 @@ func (s *Server) alertForMember(w http.ResponseWriter, r *http.Request) (store.A
 
 	return alert, channel, true
 }
+
+// historyBucketPayload is one column of the chart.
+type historyBucketPayload struct {
+	At       time.Time `json:"at"`
+	Total    int       `json:"total"`
+	Critical int       `json:"critical"`
+}
+
+// handleAlertHistory returns how many alerts opened per slice of time, for
+// the dashboard's chart.
+//
+// The counting happens in the database. Building the same chart from the
+// listing endpoint would have meant reading alerts back and adding them up
+// here, and that list is capped — a busy week would have flattened the chart
+// without anything saying so.
+func (s *Server) handleAlertHistory(w http.ResponseWriter, r *http.Request) {
+	user, _ := UserFrom(r.Context())
+	params := r.URL.Query()
+
+	// A week and twenty-four columns: long enough that a quiet homelab still
+	// has something to show, coarse enough to read on a phone.
+	window := 7 * 24 * time.Hour
+	if raw := params.Get("hours"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value <= 0 {
+			s.writeError(w, http.StatusBadRequest, "hours must be a positive number")
+			return
+		}
+		window = time.Duration(value) * time.Hour
+	}
+
+	buckets := 24
+	if raw := params.Get("buckets"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value <= 0 {
+			s.writeError(w, http.StatusBadRequest, "buckets must be a positive number")
+			return
+		}
+		buckets = value
+	}
+
+	counted, err := s.store.AlertHistoryFor(user.ID, window, buckets)
+	if err != nil {
+		s.logger.Error("reading the alert history", "error", err, "user_id", user.ID)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	payload := make([]historyBucketPayload, 0, len(counted))
+	for _, bucket := range counted {
+		payload = append(payload, historyBucketPayload{
+			At: bucket.At, Total: bucket.Total, Critical: bucket.Critical,
+		})
+	}
+	s.writeJSON(w, http.StatusOK, payload)
+}
+
+// labelCountPayload is one row of the ranking.
+type labelCountPayload struct {
+	Value string `json:"value"`
+	Total int    `json:"total"`
+}
+
+// handleTopAlertLabels ranks what fires most over a window.
+//
+// It answers a question the channel list cannot on a server where every alert
+// arrives through one channel: not *where* they came from, which is the same
+// everywhere, but *what* keeps breaking.
+func (s *Server) handleTopAlertLabels(w http.ResponseWriter, r *http.Request) {
+	user, _ := UserFrom(r.Context())
+	params := r.URL.Query()
+
+	// `service` by default: on an Icinga-fed server it is the label that
+	// actually varies, where `source` reads the same on every row.
+	label := params.Get("label")
+	if label == "" {
+		label = "service"
+	}
+
+	window := 7 * 24 * time.Hour
+	if raw := params.Get("hours"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value <= 0 {
+			s.writeError(w, http.StatusBadRequest, "hours must be a positive number")
+			return
+		}
+		window = time.Duration(value) * time.Hour
+	}
+
+	limit := 5
+	if raw := params.Get("limit"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value <= 0 {
+			s.writeError(w, http.StatusBadRequest, "limit must be a positive number")
+			return
+		}
+		limit = value
+	}
+
+	ranked, err := s.store.TopAlertLabelsFor(user.ID, label, window, limit)
+	if err != nil {
+		s.logger.Error("ranking the alerts", "error", err, "user_id", user.ID)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	payload := make([]labelCountPayload, 0, len(ranked))
+	for _, entry := range ranked {
+		payload = append(payload, labelCountPayload{Value: entry.Value, Total: entry.Total})
+	}
+	s.writeJSON(w, http.StatusOK, payload)
+}
