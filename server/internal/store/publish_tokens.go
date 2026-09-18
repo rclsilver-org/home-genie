@@ -169,3 +169,64 @@ func (s *Store) DeletePublishToken(channelID, tokenID int64) error {
 	}
 	return nil
 }
+
+// MaxIconBytes bounds what a producer's picture may weigh.
+//
+// Generous for a logo and small enough that a mistaken upload — a screenshot,
+// a photograph — is refused rather than carried in every backup for ever.
+const MaxIconBytes = 256 * 1024
+
+// SetPublishTokenIcon stores a producer's picture, or clears it when the data
+// is empty.
+//
+// The bytes live in the row rather than beside it: a handful of small images
+// is what a BLOB is for, and it keeps one file to back up instead of a
+// directory that can drift out of step with the rows naming it.
+func (s *Store) SetPublishTokenIcon(channelID, tokenID int64, data []byte, contentType string) error {
+	if len(data) > MaxIconBytes {
+		return fmt.Errorf("the icon is larger than %d bytes", MaxIconBytes)
+	}
+
+	var (
+		blob  any = data
+		mime      = contentType
+	)
+	if len(data) == 0 {
+		blob, mime = nil, ""
+	}
+
+	result, err := s.db.Exec(
+		`UPDATE publish_tokens SET icon = ?, icon_type = ?
+		  WHERE id = ? AND channel_id = ?`, blob, mime, tokenID, channelID)
+	if err != nil {
+		return fmt.Errorf("storing the icon: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("reading the result: %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// PublishTokenIcon reads a producer's picture back, with the type it was sent
+// as. Returns ErrNotFound when the token has none, which is the ordinary case
+// rather than a failure.
+func (s *Store) PublishTokenIcon(tokenID int64) ([]byte, string, error) {
+	var (
+		data []byte
+		mime string
+	)
+	err := s.db.QueryRow(
+		`SELECT icon, icon_type FROM publish_tokens WHERE id = ? AND icon IS NOT NULL`,
+		tokenID).Scan(&data, &mime)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, "", ErrNotFound
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("reading the icon: %w", err)
+	}
+	return data, mime, nil
+}

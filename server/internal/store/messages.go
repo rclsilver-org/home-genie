@@ -31,6 +31,16 @@ type Message struct {
 	ClickURL  string
 	Actions   json.RawMessage
 	CreatedAt time.Time
+	// ProducerID identifies the publish token that sent it, which is what a
+	// client needs to ask for its icon. Null for what the server generates
+	// itself and for anything sent before producers were recorded.
+	ProducerID *int64
+	// Producer is the name of that token, empty when it has since been
+	// deleted or the message predates the column.
+	Producer string
+	// ProducerIcon says whether that token has a picture to fetch, so a client
+	// asks for one only where there is one to get.
+	ProducerIcon bool
 }
 
 // NewMessage is what a producer submits.
@@ -43,6 +53,9 @@ type NewMessage struct {
 	Tags      []string
 	ClickURL  string
 	Actions   json.RawMessage
+	// PublishTokenID is which producer sent it. Null for what the server
+	// generates itself — an alert notification has no producer but the server.
+	PublishTokenID *int64
 }
 
 // CreateMessage records a message.
@@ -64,10 +77,10 @@ func (s *Store) CreateMessage(input NewMessage) (Message, error) {
 
 	created := s.timestamp()
 	result, err := s.db.Exec(
-		`INSERT INTO messages (channel_id, alert_id, title, body, priority, tags, click_url, actions, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO messages (channel_id, alert_id, title, body, priority, tags, click_url, actions, created_at, publish_token_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		input.ChannelID, input.AlertID, input.Title, input.Body, input.Priority,
-		string(tags), input.ClickURL, string(actions), created)
+		string(tags), input.ClickURL, string(actions), created, input.PublishTokenID)
 	if err != nil {
 		return Message{}, fmt.Errorf("recording the message: %w", err)
 	}
@@ -85,11 +98,20 @@ func (s *Store) CreateMessage(input NewMessage) (Message, error) {
 	}, nil
 }
 
+// messageColumns joins the producer on every read. The name and the presence
+// of an icon are resolved here rather than copied onto the message when it
+// was sent: an icon changed today should repaint the whole history, not just
+// what arrives after it.
+const messageColumns = `SELECT m.id, m.channel_id, m.alert_id, m.title, m.body,
+                               m.priority, m.tags, m.click_url, m.actions, m.created_at,
+                               m.publish_token_id, COALESCE(p.name, ''), p.icon IS NOT NULL
+                          FROM messages m
+                          LEFT JOIN publish_tokens p ON p.id = m.publish_token_id`
+
 // MessageByID reads one message.
 func (s *Store) MessageByID(id int64) (Message, error) {
 	return s.scanMessage(s.db.QueryRow(
-		`SELECT id, channel_id, alert_id, title, body, priority, tags, click_url, actions, created_at
-		   FROM messages WHERE id = ?`, id))
+		messageColumns+` WHERE m.id = ?`, id))
 }
 
 // MessageQuery bounds a listing.
@@ -106,14 +128,13 @@ func (s *Store) MessagesOf(query MessageQuery) ([]Message, error) {
 		query.Limit = 50
 	}
 
-	sqlText := `SELECT id, channel_id, alert_id, title, body, priority, tags, click_url, actions, created_at
-	              FROM messages WHERE channel_id = ?`
+	sqlText := messageColumns + ` WHERE m.channel_id = ?`
 	args := []any{query.ChannelID}
 	if query.BeforeID > 0 {
-		sqlText += ` AND id < ?`
+		sqlText += ` AND m.id < ?`
 		args = append(args, query.BeforeID)
 	}
-	sqlText += ` ORDER BY id DESC LIMIT ?`
+	sqlText += ` ORDER BY m.id DESC LIMIT ?`
 	args = append(args, query.Limit)
 
 	rows, err := s.db.Query(sqlText, args...)
@@ -135,21 +156,23 @@ func (s *Store) MessagesOf(query MessageQuery) ([]Message, error) {
 
 func (s *Store) scanMessage(row *sql.Row) (Message, error) {
 	var (
-		message Message
-		alertID sql.NullInt64
-		tags    string
-		actions string
-		created string
+		message    Message
+		alertID    sql.NullInt64
+		producerID sql.NullInt64
+		tags       string
+		actions    string
+		created    string
 	)
 	err := row.Scan(&message.ID, &message.ChannelID, &alertID, &message.Title,
-		&message.Body, &message.Priority, &tags, &message.ClickURL, &actions, &created)
+		&message.Body, &message.Priority, &tags, &message.ClickURL, &actions, &created,
+		&producerID, &message.Producer, &message.ProducerIcon)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Message{}, ErrNotFound
 	}
 	if err != nil {
 		return Message{}, fmt.Errorf("reading the message: %w", err)
 	}
-	return hydrate(message, alertID, tags, actions, created)
+	return hydrate(message, alertID, producerID, tags, actions, created)
 }
 
 // rowScanner covers both *sql.Row and *sql.Rows.
@@ -157,23 +180,29 @@ type rowScanner interface{ Scan(dest ...any) error }
 
 func scanMessageRow(row rowScanner) (Message, error) {
 	var (
-		message Message
-		alertID sql.NullInt64
-		tags    string
-		actions string
-		created string
+		message    Message
+		alertID    sql.NullInt64
+		producerID sql.NullInt64
+		tags       string
+		actions    string
+		created    string
 	)
 	if err := row.Scan(&message.ID, &message.ChannelID, &alertID, &message.Title,
-		&message.Body, &message.Priority, &tags, &message.ClickURL, &actions, &created); err != nil {
+		&message.Body, &message.Priority, &tags, &message.ClickURL, &actions, &created,
+		&producerID, &message.Producer, &message.ProducerIcon); err != nil {
 		return Message{}, fmt.Errorf("reading a message: %w", err)
 	}
-	return hydrate(message, alertID, tags, actions, created)
+	return hydrate(message, alertID, producerID, tags, actions, created)
 }
 
-func hydrate(message Message, alertID sql.NullInt64, tags, actions, created string) (Message, error) {
+func hydrate(message Message, alertID, producerID sql.NullInt64, tags, actions, created string) (Message, error) {
 	if alertID.Valid {
 		value := alertID.Int64
 		message.AlertID = &value
+	}
+	if producerID.Valid {
+		value := producerID.Int64
+		message.ProducerID = &value
 	}
 	if err := json.Unmarshal([]byte(tags), &message.Tags); err != nil {
 		message.Tags = []string{}
@@ -205,9 +234,7 @@ func (s *Store) MessagesForUser(userID int64, query FeedQuery) ([]Message, error
 		query.Limit = 50
 	}
 
-	sqlText := `SELECT m.id, m.channel_id, m.alert_id, m.title, m.body, m.priority,
-	                   m.tags, m.click_url, m.actions, m.created_at
-	              FROM messages m
+	sqlText := messageColumns + `
 	              JOIN channel_members c ON c.channel_id = m.channel_id AND c.user_id = ?
 	             WHERE m.alert_id IS NULL`
 	args := []any{userID}

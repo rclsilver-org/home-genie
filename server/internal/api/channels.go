@@ -1,7 +1,11 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -452,4 +456,107 @@ func toChannelPayload(channel store.Channel, role store.Role) channelPayload {
 		Description: channel.Description,
 		Role:        string(role),
 	}
+}
+
+// iconTypes are the pictures a producer may wear.
+//
+// The list is closed and the type is taken from the bytes rather than from
+// what the uploader claimed: these are served back to devices, and a caller
+// able to choose the Content-Type of what the server returns is a caller able
+// to serve HTML from it.
+var iconTypes = map[string]bool{
+	"image/png":  true,
+	"image/jpeg": true,
+	"image/webp": true,
+}
+
+// handleSetTokenIcon stores the picture shown beside what a producer sends.
+// An empty body clears it.
+func (s *Server) handleSetTokenIcon(w http.ResponseWriter, r *http.Request) {
+	channel, _, ok := s.channelForAdmin(w, r)
+	if !ok {
+		return
+	}
+	tokenID, err := strconv.ParseInt(r.PathValue("tokenID"), 10, 64)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "unknown token")
+		return
+	}
+
+	// One byte past the limit is read on purpose, so an oversized upload is
+	// refused rather than silently truncated to something that still decodes.
+	data, err := io.ReadAll(io.LimitReader(r.Body, store.MaxIconBytes+1))
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "unreadable body")
+		return
+	}
+	if len(data) > store.MaxIconBytes {
+		s.writeError(w, http.StatusRequestEntityTooLarge,
+			fmt.Sprintf("an icon may not exceed %d bytes", store.MaxIconBytes))
+		return
+	}
+
+	mime := ""
+	if len(data) > 0 {
+		mime = strings.SplitN(http.DetectContentType(data), ";", 2)[0]
+		if !iconTypes[mime] {
+			s.writeError(w, http.StatusUnsupportedMediaType,
+				"an icon must be a PNG, a JPEG or a WebP")
+			return
+		}
+	}
+
+	if err := s.store.SetPublishTokenIcon(channel.ID, tokenID, data, mime); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "unknown token")
+			return
+		}
+		s.logger.Error("storing the icon", "error", err, "token_id", tokenID)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	s.logger.Info("producer icon set", "channel", channel.Slug,
+		"token_id", tokenID, "bytes", len(data), "type", mime)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleTokenIcon serves a producer's picture to any signed-in device.
+//
+// Not gated on channel membership: the icon is a logo, it says nothing the
+// message beside it does not already say, and gating it would mean a second
+// lookup on every row of a feed.
+func (s *Server) handleTokenIcon(w http.ResponseWriter, r *http.Request) {
+	tokenID, err := strconv.ParseInt(r.PathValue("tokenID"), 10, 64)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "unknown token")
+		return
+	}
+
+	data, mime, err := s.store.PublishTokenIcon(tokenID)
+	if errors.Is(err, store.ErrNotFound) {
+		s.writeError(w, http.StatusNotFound, "no icon")
+		return
+	}
+	if err != nil {
+		s.logger.Error("reading the icon", "error", err, "token_id", tokenID)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// Tagged by the bytes themselves, so a changed icon is fetched again and
+	// an unchanged one is not — which is what lets a client cache it for a
+	// day without going stale the moment someone replaces it.
+	sum := sha256.Sum256(data)
+	etag := `"` + hex.EncodeToString(sum[:8]) + `"`
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }

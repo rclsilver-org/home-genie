@@ -35,7 +35,7 @@ type ntfyPublish struct {
 // This is what lets *arr, diun and anything else already speaking ntfy move
 // over by changing a URL and a token, with no other configuration touched.
 func (s *Server) handleIngestNtfy(w http.ResponseWriter, r *http.Request) {
-	_, channel, ok := PublishTargetFrom(r.Context())
+	token, channel, ok := PublishTargetFrom(r.Context())
 	if !ok {
 		s.writeError(w, http.StatusUnauthorized, "invalid token")
 		return
@@ -46,6 +46,11 @@ func (s *Server) handleIngestNtfy(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	// Which producer sent it. This is what lets the feed put a face beside a
+	// notification: the token is already one per software, it only lacked a
+	// way back from the message.
+	input.PublishTokenID = &token.ID
 
 	message, err := s.store.CreateMessage(input)
 	if err != nil {
@@ -238,6 +243,13 @@ type messagePayload struct {
 	ClickURL    string          `json:"click_url,omitempty"`
 	Actions     json.RawMessage `json:"actions,omitempty"`
 	CreatedAt   time.Time       `json:"created_at"`
+	// ProducerID identifies the publish token that sent it — what a client
+	// needs to ask for its icon. Producer names it, and ProducerIcon says
+	// whether that token has a picture to fetch — so a client asks for one
+	// only where there is one to get.
+	ProducerID   *int64 `json:"producer_id,omitempty"`
+	Producer     string `json:"producer,omitempty"`
+	ProducerIcon bool   `json:"producer_icon,omitempty"`
 	// Rank of the reminder, only on what the devices receive: the stored
 	// message does not carry it, and reading it back later would give
 	// today's count, not the one it was sent with.
@@ -264,6 +276,8 @@ func toMessagePayload(message store.Message, slug string) messagePayload {
 		AlertID: message.AlertID, Title: message.Title, Body: message.Body,
 		Priority: message.Priority, Tags: tags, ClickURL: message.ClickURL,
 		Actions: message.Actions, CreatedAt: message.CreatedAt,
+		ProducerID: message.ProducerID, Producer: message.Producer,
+		ProducerIcon: message.ProducerIcon,
 	}
 }
 

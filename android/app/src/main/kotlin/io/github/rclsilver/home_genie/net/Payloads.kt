@@ -32,6 +32,14 @@ data class MessagePayload(
     // here, so `ignoreUnknownKeys` dropped it and the feed showed messages
     // with no time at all — two minutes old and two days old looked alike.
     @SerialName("created_at") val createdAt: String = "",
+    // Which publish token sent it. A token is one per software, so this is
+    // the producer: Sonarr, Radarr, diun. Null for what the server generates
+    // itself and for anything sent before producers were recorded.
+    @SerialName("producer_id") val producerId: Long? = null,
+    val producer: String = "",
+    // Whether that token has a picture to fetch, so the feed asks for one only
+    // where there is one to get.
+    @SerialName("producer_icon") val producerIcon: Boolean = false,
 )
 
 /** Payload of a `messages.read` event, sent by my other devices. */

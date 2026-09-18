@@ -69,6 +69,12 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.Handle("GET /api/v1/channels/{id}/tokens", device(s.handleListTokens))
 	mux.Handle("POST /api/v1/channels/{id}/tokens", device(s.handleCreateToken))
 	mux.Handle("DELETE /api/v1/channels/{id}/tokens/{tokenID}", device(s.handleRevokeToken))
+	mux.Handle("PUT /api/v1/channels/{id}/tokens/{tokenID}/icon", device(s.handleSetTokenIcon))
+
+	// Outside the channel: the icon is a logo, and a feed mixing channels
+	// would otherwise need to know which one each row came from to build its
+	// address.
+	mux.Handle("GET /api/v1/tokens/{tokenID}/icon", device(s.handleTokenIcon))
 
 	mux.Handle("GET /api/v1/channels/{id}/messages", device(s.handleListMessages))
 

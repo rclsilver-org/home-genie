@@ -256,6 +256,11 @@ private fun NotificationRow(
                 Modifier.padding(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                // Whoever sent it, at the left edge. A publish token is one per
+                // software, so the token that published a message is its
+                // producer — it only lacked a face.
+                ProducerIcon(message.producerId, message.producerIcon, serverUrl, token)
+
                 Column(
                     Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -285,10 +290,10 @@ private fun NotificationRow(
                             )
                         }
                     }
-
+        
                     if (message.body.isNotEmpty()) {
-                        // Stripped, not rendered: two lines have to carry the
-                        // message and every bracket spent here is a word lost.
+                        // Stripped, not rendered: two lines have to carry the message
+                        // and every bracket spent here is a word lost.
                         Text(
                             plainText(message.body),
                             style = MaterialTheme.typography.bodyMedium,
@@ -296,7 +301,7 @@ private fun NotificationRow(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-
+        
                     // No channel here. Which one a notification came through is
                     // a property of the feed, not of the message: it reads the
                     // same on every row of a feed one has chosen to open, and

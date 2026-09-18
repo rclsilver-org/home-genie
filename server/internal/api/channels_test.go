@@ -335,3 +335,123 @@ func TestUserSearchMatchesBothNames(t *testing.T) {
 		t.Fatalf("two accounts expected: %+v", all)
 	}
 }
+
+// A 1×1 PNG, small enough to sit in a test and real enough to be sniffed.
+var tinyPNG = []byte{
+	0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a,
+	0x00, 0x00, 0x00, 0x0d, 'I', 'H', 'D', 'R',
+	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+	0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+	0x89, 0x00, 0x00, 0x00, 0x0a, 'I', 'D', 'A', 'T',
+	0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05,
+	0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00,
+	0x00, 0x00, 'I', 'E', 'N', 'D', 0xae, 0x42, 0x60, 0x82,
+}
+
+func raw(t *testing.T, server *Server, method, path, token, contentType string,
+	body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(method, path, bytes.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+token)
+	if contentType != "" {
+		request.Header.Set("Content-Type", contentType)
+	}
+	recorder := httptest.NewRecorder()
+	server.Routes().ServeHTTP(recorder, request)
+	return recorder
+}
+
+// The whole point of the feature: a message says which producer sent it, and
+// the feed can put its face beside it.
+func TestAMessageNamesTheProducerThatSentIt(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	session := session(t, server, "thomas", testPassword)
+	channel, publishToken := issueChannelAndToken(t, repository, "mediacenter")
+
+	if r := publish(t, server, "mediacenter", publishToken, "downloaded", nil); r.Code != http.StatusOK {
+		t.Fatalf("publishing: %d %s", r.Code, r.Body)
+	}
+
+	feed := decode[[]messagePayload](t, call(t, server, http.MethodGet, "/api/v1/messages", session, nil))
+	if len(feed) != 1 {
+		t.Fatalf("%d messages", len(feed))
+	}
+	if feed[0].Producer == "" {
+		t.Fatal("the message does not name its producer")
+	}
+	if feed[0].ProducerIcon {
+		t.Fatal("a producer with no picture should not claim one")
+	}
+	_ = channel
+}
+
+func TestAProducerIconIsStoredAndServedBack(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	session := session(t, server, "thomas", testPassword)
+
+	created := decode[channelPayload](t, call(t, server, http.MethodPost, "/api/v1/channels",
+		session, createChannelRequest{Slug: "mediacenter"}))
+	issued := decode[publishTokenPayload](t, call(t, server, http.MethodPost,
+		fmt.Sprintf("/api/v1/channels/%d/tokens", created.ID), session,
+		createTokenRequest{Name: "sonarr"}))
+
+	iconPath := fmt.Sprintf("/api/v1/channels/%d/tokens/%d/icon", created.ID, issued.ID)
+	if r := raw(t, server, http.MethodPut, iconPath, session, "image/png", tinyPNG); r.Code != http.StatusNoContent {
+		t.Fatalf("uploading: %d %s", r.Code, r.Body)
+	}
+
+	servePath := fmt.Sprintf("/api/v1/tokens/%d/icon", issued.ID)
+	served := call(t, server, http.MethodGet, servePath, session, nil)
+	if served.Code != http.StatusOK {
+		t.Fatalf("serving: %d %s", served.Code, served.Body)
+	}
+	if got := served.Header().Get("Content-Type"); got != "image/png" {
+		t.Fatalf("content type = %q", got)
+	}
+	if !bytes.Equal(served.Body.Bytes(), tinyPNG) {
+		t.Fatal("the bytes came back changed")
+	}
+
+	// Tagged by its content, so a client that already has it is told so.
+	etag := served.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("no ETag")
+	}
+	again := httptest.NewRequest(http.MethodGet, servePath, nil)
+	again.Header.Set("Authorization", "Bearer "+session)
+	again.Header.Set("If-None-Match", etag)
+	recorder := httptest.NewRecorder()
+	server.Routes().ServeHTTP(recorder, again)
+	if recorder.Code != http.StatusNotModified {
+		t.Fatalf("a matching ETag returned %d, want 304", recorder.Code)
+	}
+}
+
+// The type is taken from the bytes, never from what the uploader claimed:
+// these are served back, and choosing the Content-Type of a server's response
+// is how one serves HTML from someone else's origin.
+func TestAnIconIsRefusedUnlessItsBytesAreAnImage(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	session := session(t, server, "thomas", testPassword)
+
+	created := decode[channelPayload](t, call(t, server, http.MethodPost, "/api/v1/channels",
+		session, createChannelRequest{Slug: "mediacenter"}))
+	issued := decode[publishTokenPayload](t, call(t, server, http.MethodPost,
+		fmt.Sprintf("/api/v1/channels/%d/tokens", created.ID), session,
+		createTokenRequest{Name: "sonarr"}))
+	iconPath := fmt.Sprintf("/api/v1/channels/%d/tokens/%d/icon", created.ID, issued.ID)
+
+	html := []byte("<html><script>alert(1)</script></html>")
+	if r := raw(t, server, http.MethodPut, iconPath, session, "image/png", html); r.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("HTML claiming to be a PNG returned %d, want 415", r.Code)
+	}
+
+	oversized := make([]byte, store.MaxIconBytes+1)
+	copy(oversized, tinyPNG)
+	if r := raw(t, server, http.MethodPut, iconPath, session, "image/png", oversized); r.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("an oversized icon returned %d, want 413", r.Code)
+	}
+}

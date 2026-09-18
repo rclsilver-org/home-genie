@@ -657,3 +657,27 @@ suspend fun searchUsers(serverUrl: String, token: String, fragment: String):
         }
     }
 }
+
+/**
+ * A producer's icon, as the bytes the server holds.
+ *
+ * Fetched through the same authenticated client as everything else: the image
+ * comes from the server the application is already talking to, so there is no
+ * second host to reach, no third party to trust, and nothing to load when the
+ * homelab is unreachable — which is when this screen matters most.
+ */
+suspend fun fetchProducerIcon(serverUrl: String, token: String, producerId: Long):
+    Result<ByteArray> = withContext(Dispatchers.IO) {
+    apiCatching {
+        val call = ApiClient.shared.newCall(
+            Request.Builder()
+                .url("${serverUrl.trimEnd('/')}/api/v1/tokens/$producerId/icon")
+                .header("Authorization", "Bearer $token")
+                .build()
+        )
+        call.execute().use { response ->
+            if (!response.isSuccessful) throw IOException("HTTP error ${response.code}")
+            response.body?.bytes() ?: ByteArray(0)
+        }
+    }
+}
