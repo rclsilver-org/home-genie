@@ -39,7 +39,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,6 +50,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import java.text.SimpleDateFormat
@@ -560,7 +565,24 @@ fun ReliabilityBanner(state: ConnectionService.State) {
  */
 @Composable
 fun ReliabilityChecks(context: Context, symptom: Boolean, title: String = "") {
-    val checks = pendingChecks(context, symptom)
+    // Asked again on every return to the foreground.
+    //
+    // These answers live in the system settings, which is another application
+    // entirely. Nothing in Compose knows a permission was granted while this
+    // screen sat in the background, so the card stayed up after the very tap
+    // meant to clear it — and the one instruction the screen gives looked
+    // like it had not worked.
+    val owner = LocalLifecycleOwner.current
+    var asked by remember { mutableIntStateOf(0) }
+    DisposableEffect(owner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) asked++
+        }
+        owner.lifecycle.addObserver(observer)
+        onDispose { owner.lifecycle.removeObserver(observer) }
+    }
+
+    val checks = remember(symptom, asked) { pendingChecks(context, symptom) }
     if (checks.isEmpty()) return
 
     if (title.isNotEmpty()) {
