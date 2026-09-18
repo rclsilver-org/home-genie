@@ -95,7 +95,7 @@ fun AppScreen(settings: Settings) {
     // The message itself and not its id: there is no endpoint to fetch one
     // back, and the list already holds it.
     var openMessage by remember { mutableStateOf<MessagePayload?>(null) }
-    var destination by remember { mutableStateOf(Destination.OVERVIEW) }
+    var destination by remember { mutableStateOf(Destination.DASHBOARD) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
 
     // Recounted on every event received: the server is the one that knows,
@@ -245,7 +245,7 @@ fun AppScreen(settings: Settings) {
                         serverUrl = serverUrl,
                         token = token,
                     )
-                    destination == Destination.OVERVIEW -> OverviewScreen(
+                    destination == Destination.DASHBOARD -> DashboardScreen(
                         serverUrl = serverUrl,
                         token = token,
                         unread = unread,

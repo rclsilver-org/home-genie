@@ -35,7 +35,7 @@ import androidx.compose.ui.unit.dp
  * back to the alerts themselves.
  */
 enum class Destination(val label: String, val icon: ImageVector) {
-    OVERVIEW("Overview", Icons.Default.Home),
+    DASHBOARD("Dashboard", Icons.Default.Home),
     ALERTS("Alerts", Icons.Default.Warning),
     NOTIFICATIONS("Notifications", Icons.Default.Notifications),
     CHANNELS("Channels", Icons.Default.List),

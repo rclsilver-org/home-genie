@@ -718,3 +718,45 @@ suspend fun setProducerIcon(
         }
     }
 }
+
+/**
+ * How many alerts opened per slice of time, counted by the server.
+ *
+ * Not derived from the alert listing: that one is capped, and a chart built
+ * on it would flatten a busy week without saying so — which is the week
+ * anyone would be looking at it for.
+ */
+suspend fun fetchAlertHistory(
+    serverUrl: String,
+    token: String,
+    hours: Int = 168,
+    buckets: Int = 24,
+): Result<List<HistoryBucketPayload>> = withContext(Dispatchers.IO) {
+    apiCatching {
+        get(serverUrl, token, "/api/v1/alerts/history?hours=$hours&buckets=$buckets") { text ->
+            Json { ignoreUnknownKeys = true }
+                .decodeFromString(ListSerializer(HistoryBucketPayload.serializer()), text)
+        }
+    }
+}
+
+/**
+ * What fires most over a window, ranked by the server for the same reason.
+ *
+ * `service` by default: on a server fed by one bridge into one channel, it is
+ * the label that actually tells two alerts apart.
+ */
+suspend fun fetchTopAlertLabels(
+    serverUrl: String,
+    token: String,
+    label: String = "service",
+    hours: Int = 168,
+    limit: Int = 5,
+): Result<List<LabelCountPayload>> = withContext(Dispatchers.IO) {
+    apiCatching {
+        get(serverUrl, token, "/api/v1/alerts/top?label=$label&hours=$hours&limit=$limit") { text ->
+            Json { ignoreUnknownKeys = true }
+                .decodeFromString(ListSerializer(LabelCountPayload.serializer()), text)
+        }
+    }
+}

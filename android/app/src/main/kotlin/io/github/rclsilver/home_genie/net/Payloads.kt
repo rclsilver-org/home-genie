@@ -194,6 +194,21 @@ data class QuietHoursPayload(
     val isOverride: Boolean get() = scope == "channel"
 }
 
+/** One column of the alert history: when it starts, and what opened in it. */
+@Serializable
+data class HistoryBucketPayload(
+    val at: String = "",
+    val total: Int = 0,
+    val critical: Int = 0,
+)
+
+/** One row of the ranking: a label's value and how often it fired. */
+@Serializable
+data class LabelCountPayload(
+    val value: String = "",
+    val total: Int = 0,
+)
+
 /** An account offered by the completion. */
 @Serializable
 data class UserSuggestionPayload(
