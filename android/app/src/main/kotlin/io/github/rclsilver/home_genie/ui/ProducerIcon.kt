@@ -15,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -44,9 +45,24 @@ import kotlinx.coroutines.sync.withLock
  * configuring one — and one dependency fewer in a repository that keeps them
  * inspectable.
  */
-private object IconCache {
+object IconCache {
     private val lock = Mutex()
     private val decoded = mutableMapOf<Long, ImageBitmap?>()
+
+    /**
+     * Bumped whenever a picture is replaced, and read by everything showing
+     * one. Without it a producer whose icon was just changed would keep
+     * wearing the old one until the process restarted: the cache would be
+     * empty again but nothing would think to look.
+     */
+    var generation by mutableIntStateOf(0)
+        private set
+
+    /** Drops what is held for a producer, so the next look fetches again. */
+    suspend fun forget(producerId: Long) {
+        lock.withLock { decoded.remove(producerId) }
+        generation++
+    }
 
     /**
      * Returns the icon, fetching it once. A failure is remembered as an
@@ -90,7 +106,7 @@ fun ProducerIcon(
     // once instead of flashing it and swapping a moment later.
     var pending by remember(producerId) { mutableStateOf(hasIcon && producerId != null) }
 
-    LaunchedEffect(producerId, hasIcon, serverUrl, token) {
+    LaunchedEffect(producerId, hasIcon, serverUrl, token, IconCache.generation) {
         image = if (producerId != null && hasIcon && serverUrl.isNotEmpty() && token.isNotEmpty()) {
             IconCache.of(serverUrl, token, producerId)
         } else null

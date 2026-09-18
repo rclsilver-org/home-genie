@@ -455,3 +455,43 @@ func TestAnIconIsRefusedUnlessItsBytesAreAnImage(t *testing.T) {
 		t.Fatalf("an oversized icon returned %d, want 413", r.Code)
 	}
 }
+
+// The administration screen decides whether to fetch a picture from this,
+// so a token that has one must say so and one that has not must not.
+func TestATokenListingSaysWhichProducersHaveAPicture(t *testing.T) {
+	server, repository := newTestServer(t)
+	withLocalAccount(t, repository, "thomas", testPassword)
+	session := session(t, server, "thomas", testPassword)
+
+	created := decode[channelPayload](t, call(t, server, http.MethodPost, "/api/v1/channels",
+		session, createChannelRequest{Slug: "mediacenter"}))
+	tokensPath := fmt.Sprintf("/api/v1/channels/%d/tokens", created.ID)
+	withIcon := decode[publishTokenPayload](t, call(t, server, http.MethodPost, tokensPath,
+		session, createTokenRequest{Name: "sonarr"}))
+	decode[publishTokenPayload](t, call(t, server, http.MethodPost, tokensPath,
+		session, createTokenRequest{Name: "radarr"}))
+
+	iconPath := fmt.Sprintf("%s/%d/icon", tokensPath, withIcon.ID)
+	if r := raw(t, server, http.MethodPut, iconPath, session, "image/png", tinyPNG); r.Code != http.StatusNoContent {
+		t.Fatalf("uploading: %d %s", r.Code, r.Body)
+	}
+
+	listed := decode[[]publishTokenPayload](t, call(t, server, http.MethodGet, tokensPath, session, nil))
+	for _, entry := range listed {
+		want := entry.Name == "sonarr"
+		if entry.HasIcon != want {
+			t.Errorf("%s: has_icon = %v, want %v", entry.Name, entry.HasIcon, want)
+		}
+	}
+
+	// Clearing it takes the flag back down: an empty body is how one removes.
+	if r := raw(t, server, http.MethodPut, iconPath, session, "", nil); r.Code != http.StatusNoContent {
+		t.Fatalf("clearing: %d %s", r.Code, r.Body)
+	}
+	for _, entry := range decode[[]publishTokenPayload](t,
+		call(t, server, http.MethodGet, tokensPath, session, nil)) {
+		if entry.HasIcon {
+			t.Errorf("%s still claims a picture after it was cleared", entry.Name)
+		}
+	}
+}

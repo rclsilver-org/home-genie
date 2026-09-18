@@ -115,6 +115,9 @@ data class PublishTokenPayload(
     val name: String = "",
     @SerialName("last_used_at") val lastUsedAt: String? = null,
     @SerialName("revoked_at") val revokedAt: String? = null,
+    // Whether a picture is stored for this producer, so the administration
+    // screen fetches one only where there is one.
+    @SerialName("has_icon") val hasIcon: Boolean = false,
     val token: String = "",
 ) {
     val isRevoked: Boolean get() = revokedAt != null

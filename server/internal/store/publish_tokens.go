@@ -17,6 +17,9 @@ type PublishToken struct {
 	LastUsedAt *time.Time
 	RevokedAt  *time.Time
 	CreatedAt  time.Time
+	// HasIcon says whether a picture is stored for this producer, without
+	// carrying the bytes into every listing.
+	HasIcon bool
 }
 
 // IsRevoked reports whether the token has been withdrawn.
@@ -96,7 +99,8 @@ func (s *Store) TouchPublishToken(id int64) error {
 // the history of who could publish stays visible.
 func (s *Store) PublishTokensOf(channelID int64) ([]PublishToken, error) {
 	rows, err := s.db.Query(
-		`SELECT id, channel_id, name, last_used_at, revoked_at, created_at
+		`SELECT id, channel_id, name, last_used_at, revoked_at, created_at,
+		        icon IS NOT NULL
 		   FROM publish_tokens WHERE channel_id = ?
 		  ORDER BY revoked_at IS NOT NULL, created_at DESC`, channelID)
 	if err != nil {
@@ -113,7 +117,7 @@ func (s *Store) PublishTokensOf(channelID int64) ([]PublishToken, error) {
 			created  string
 		)
 		if err := rows.Scan(&token.ID, &token.ChannelID, &token.Name,
-			&lastUsed, &revoked, &created); err != nil {
+			&lastUsed, &revoked, &created, &token.HasIcon); err != nil {
 			return nil, fmt.Errorf("reading a token: %w", err)
 		}
 		token.LastUsedAt = optionalTime(lastUsed)
@@ -188,8 +192,8 @@ func (s *Store) SetPublishTokenIcon(channelID, tokenID int64, data []byte, conte
 	}
 
 	var (
-		blob  any = data
-		mime      = contentType
+		blob any = data
+		mime     = contentType
 	)
 	if len(data) == 0 {
 		blob, mime = nil, ""

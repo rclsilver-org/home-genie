@@ -37,6 +37,9 @@ type publishTokenPayload struct {
 	Name       string     `json:"name"`
 	LastUsedAt *time.Time `json:"last_used_at"`
 	RevokedAt  *time.Time `json:"revoked_at"`
+	// HasIcon lets the administration screen show the producer's picture
+	// without fetching it for the ones that have none.
+	HasIcon bool `json:"has_icon"`
 	// Only ever set on creation: the clear value is shown once.
 	Token string `json:"token,omitempty"`
 }
@@ -315,6 +318,7 @@ func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 			Name:       token.Name,
 			LastUsedAt: token.LastUsedAt,
 			RevokedAt:  token.RevokedAt,
+			HasIcon:    token.HasIcon,
 		})
 	}
 	s.writeJSON(w, http.StatusOK, payload)

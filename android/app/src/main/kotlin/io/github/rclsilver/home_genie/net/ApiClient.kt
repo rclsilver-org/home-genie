@@ -681,3 +681,40 @@ suspend fun fetchProducerIcon(serverUrl: String, token: String, producerId: Long
         }
     }
 }
+
+/**
+ * Stores the picture shown beside what a producer sends, or clears it when
+ * the bytes are empty — which is what an emptied choice means, and the server
+ * reads it that way.
+ *
+ * The bytes go up as they came off disk. The server decides what they are
+ * from the bytes themselves, so there is nothing for this side to claim and
+ * nothing for it to get wrong.
+ */
+suspend fun setProducerIcon(
+    serverUrl: String,
+    token: String,
+    channelId: Long,
+    tokenId: Long,
+    bytes: ByteArray,
+): Result<Unit> = withContext(Dispatchers.IO) {
+    apiCatching {
+        val call = ApiClient.shared.newCall(
+            Request.Builder()
+                .url("${serverUrl.trimEnd('/')}/api/v1/channels/$channelId/tokens/$tokenId/icon")
+                .put(bytes.toRequestBody(null, 0, bytes.size))
+                .header("Authorization", "Bearer $token")
+                .build()
+        )
+        call.execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                val message = runCatching {
+                    Json { ignoreUnknownKeys = true }
+                        .decodeFromString(ErrorResponse.serializer(), text).error
+                }.getOrElse { "HTTP error ${response.code}" }
+                throw IOException(message)
+            }
+        }
+    }
+}
