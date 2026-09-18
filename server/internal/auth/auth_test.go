@@ -81,7 +81,7 @@ func TestVerifyRejectsGarbage(t *testing.T) {
 }
 
 func TestNewTokenIsPrefixedUniqueAndHashed(t *testing.T) {
-	plain, hashed, err := NewToken(DeviceTokenPrefix)
+	plain, hashed, err := NewToken(DeviceTokenPrefix, "")
 	if err != nil {
 		t.Fatalf("NewToken: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestNewTokenIsPrefixedUniqueAndHashed(t *testing.T) {
 		t.Fatal("HashToken does not reproduce the stored hash")
 	}
 
-	other, _, err := NewToken(DeviceTokenPrefix)
+	other, _, err := NewToken(DeviceTokenPrefix, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,6 +117,76 @@ func TestBearerToken(t *testing.T) {
 	for header, want := range cases {
 		if got := BearerToken(header); got != want {
 			t.Errorf("BearerToken(%q) = %q, want %q", header, got, want)
+		}
+	}
+}
+
+// The label is a note to a human and never authenticates anything.
+func TestALabelledTokenCarriesItsProducerInFront(t *testing.T) {
+	plain, hashed, err := NewToken(PublishTokenPrefix, "Sonarr")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.HasPrefix(plain, "sonarr:") {
+		t.Fatalf("token = %q, want it to name its producer", plain)
+	}
+	if hashed != HashToken(SecretOf(plain)) {
+		t.Fatal("the stored hash does not cover the secret")
+	}
+	if hashed == HashToken(plain) {
+		t.Fatal("the whole string was hashed, so renaming would break the token")
+	}
+}
+
+// Every token issued before labels existed looks like this, and is still
+// sitting in a producer's configuration file.
+func TestATokenWithoutALabelIsItsOwnSecret(t *testing.T) {
+	plain, hashed, err := NewToken(PublishTokenPrefix, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(plain, ":") {
+		t.Fatalf("token = %q, want no label", plain)
+	}
+	if SecretOf(plain) != plain {
+		t.Fatal("the whole token should be its own secret")
+	}
+	if hashed != HashToken(plain) {
+		t.Fatal("an unlabelled token must hash exactly as it did before")
+	}
+}
+
+// A label that cannot survive a shell, a URL or the colon that ends it.
+func TestALabelIsReducedToWhatCanSitInFrontOfAToken(t *testing.T) {
+	cases := map[string]string{
+		"Sonarr":             "sonarr",
+		"  Radarr  ":         "radarr",
+		"Docker Image Watch": "docker-image-watch",
+		"a:b":                "ab",
+		"Alertmanager (k8s)": "alertmanager-k8s",
+		"---":                "",
+		"🙂":                  "",
+	}
+	for name, want := range cases {
+		if got := Slug(name); got != want {
+			t.Errorf("Slug(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// A caller may send any label it likes: it is the secret that is checked.
+func TestTheLabelIsNotPartOfWhatAuthenticates(t *testing.T) {
+	plain, hashed, err := NewToken(PublishTokenPrefix, "sonarr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := SecretOf(plain)
+
+	for _, sent := range []string{secret, "sonarr:" + secret, "anything:" + secret} {
+		if HashToken(SecretOf(sent)) != hashed {
+			t.Errorf("%q did not resolve to the stored hash", sent)
 		}
 	}
 }

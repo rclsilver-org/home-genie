@@ -53,7 +53,7 @@ func issueChannelAndToken(t *testing.T, s *store.Store, slug string) (store.Chan
 	if err != nil {
 		t.Fatal(err)
 	}
-	plain, hashed, err := auth.NewToken(auth.PublishTokenPrefix)
+	plain, hashed, err := auth.NewToken(auth.PublishTokenPrefix, "test")
 	if err != nil {
 		t.Fatal(err)
 	}

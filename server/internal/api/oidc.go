@@ -61,7 +61,7 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	plain, hashed, err := auth.NewToken(auth.DeviceTokenPrefix)
+	plain, hashed, err := auth.NewToken(auth.DeviceTokenPrefix, "")
 	if err != nil {
 		s.logger.Error("drawing the token", "error", err)
 		s.writeError(w, http.StatusInternalServerError, "internal error")

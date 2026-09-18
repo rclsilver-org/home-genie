@@ -108,7 +108,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// run of typos would lock it out after the fact.
 	s.logins.reset(strings.ToLower(request.Username))
 
-	plain, hashed, err := auth.NewToken(auth.DeviceTokenPrefix)
+	plain, hashed, err := auth.NewToken(auth.DeviceTokenPrefix, "")
 	if err != nil {
 		s.logger.Error("drawing the token", "error", err)
 		s.writeError(w, http.StatusInternalServerError, "internal error")
@@ -218,7 +218,11 @@ func (s *Server) requirePublishToken(next http.Handler) http.Handler {
 			return
 		}
 
-		record, channel, err := s.store.PublishTokenByHash(auth.HashToken(token))
+		// Only the secret is hashed: the label in front is a note to a human.
+		// A token issued before labels existed has none and is its own secret,
+		// which is what keeps the ones already in producers' configurations
+		// working.
+		record, channel, err := s.store.PublishTokenByHash(auth.HashToken(auth.SecretOf(token)))
 		if errors.Is(err, store.ErrNotFound) {
 			// Covers the unknown token, the revoked one, and a device token
 			// used as a publisher: all indistinguishable from outside.

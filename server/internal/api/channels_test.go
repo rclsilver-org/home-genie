@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/rclsilver-org/home-genie/server/internal/auth"
@@ -218,8 +219,15 @@ func TestPublishTokenIsShownOnceThenRevocable(t *testing.T) {
 	if _, _, err := repository.PublishTokenByHash(issued.Token); err == nil {
 		t.Fatal("the token resolves in clear, so it was stored unhashed")
 	}
-	if _, _, err := repository.PublishTokenByHash(auth.HashToken(issued.Token)); err != nil {
-		t.Fatalf("the token does not resolve through its hash: %v", err)
+	// The label rides in front and only the secret is hashed, so the whole
+	// string no longer resolves — that is the point of the format.
+	if !strings.HasPrefix(issued.Token, "sonarr:") {
+		t.Fatalf("the token does not name its producer: %q", issued.Token)
+	}
+	if _, _, err := repository.PublishTokenByHash(
+		auth.HashToken(auth.SecretOf(issued.Token)),
+	); err != nil {
+		t.Fatalf("the token does not resolve through its secret: %v", err)
 	}
 
 	// The listing never shows it again.

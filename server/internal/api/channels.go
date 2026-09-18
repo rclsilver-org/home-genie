@@ -336,7 +336,7 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	plain, hashed, err := auth.NewToken(auth.PublishTokenPrefix)
+	plain, hashed, err := auth.NewToken(auth.PublishTokenPrefix, request.Name)
 	if err != nil {
 		s.logger.Error("drawing the token", "error", err)
 		s.writeError(w, http.StatusInternalServerError, "internal error")
