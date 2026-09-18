@@ -89,8 +89,7 @@ identity provider fails clearly rather than mysteriously.
 ### `GET /api/v1/me` *(implemented)*
 
 Returns the caller and their devices, each with its connection state, its last
-activity, and a `current` flag on the one calling. This is what the application's
-connection diagnostics reads.
+activity, and a `current` flag on the one calling.
 
 ### `GET /api/v1/users?q=` *(implemented)*
 
@@ -418,8 +417,7 @@ Frames:
 
 The heartbeat is an application frame and not a protocol ping, because the application
 has to **see** it: a socket the system silently froze stays open as far as the OS is
-concerned, and only a missing heartbeat reveals it. This is what the diagnostics
-screen reads.
+concerned, and only a missing heartbeat reveals it.
 
 An event is **recorded before being broadcast**. A socket that misses the broadcast
 will replay it; an event only sent live would be lost for good.

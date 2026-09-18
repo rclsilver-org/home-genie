@@ -40,7 +40,6 @@ enum class Destination(val label: String, val icon: ImageVector) {
     NOTIFICATIONS("Notifications", Icons.Default.Notifications),
     CHANNELS("Channels", Icons.Default.List),
     SETTINGS("Settings", Icons.Default.Settings),
-    DIAGNOSTICS("Diagnostics", Icons.Default.Info),
 }
 
 /**

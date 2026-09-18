@@ -32,9 +32,6 @@ import io.github.rclsilver.home_genie.service.ConnectionService
 /**
  * What can be set: the session, and the system settings the application
  * depends on.
- *
- * Kept apart from the diagnostics, which only report — the two looked alike as
- * long as they shared a screen, when one is changed and the other is read.
  */
 @Composable
 fun SettingsScreen(settings: Settings) {
@@ -104,8 +101,8 @@ fun SettingsScreen(settings: Settings) {
 
     if (!state.running) {
         Text(
-            "The service is stopped: it restarts the next time the application " +
-                "is opened, or from the diagnostics.",
+            "The service is stopped: it restarts the next time the " +
+                "application is opened.",
             style = MaterialTheme.typography.bodySmall,
         )
     }

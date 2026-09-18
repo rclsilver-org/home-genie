@@ -44,7 +44,7 @@ type mePayloadDev struct {
 
 // handleMe reports the caller and its devices. It is the smallest endpoint
 // that proves the whole authentication chain, and it is what the app's
-// connection diagnostic will read.
+// application will read.
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	user, ok := UserFrom(r.Context())
 	if !ok {

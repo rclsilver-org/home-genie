@@ -110,7 +110,7 @@ func (s *Store) DeviceByTokenHash(tokenHash string) (Device, User, error) {
 }
 
 // TouchDevice records that the device was seen. Called on authenticated
-// requests, it is what makes a stale device visible in the diagnostics.
+// requests, it is what makes a stale device visible.
 func (s *Store) TouchDevice(id int64) error {
 	if _, err := s.db.Exec(
 		`UPDATE devices SET last_seen_at = ? WHERE id = ?`, s.timestamp(), id); err != nil {

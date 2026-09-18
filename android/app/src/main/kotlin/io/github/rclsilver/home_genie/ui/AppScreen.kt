@@ -270,7 +270,6 @@ fun AppScreen(settings: Settings) {
                     destination == Destination.CHANNELS ->
                         ChannelsScreen(settings) { openChannel = it }
                     destination == Destination.SETTINGS -> SettingsScreen(settings)
-                    destination == Destination.DIAGNOSTICS -> DiagnosticCard(settings)
                 }
             }
         }
@@ -369,70 +368,10 @@ private fun LoginCard(settings: Settings) {
     }
 }
 
-@Composable
-private fun DiagnosticCard(settings: Settings) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val state by ConnectionService.observedState.collectAsState()
-    val username by settings.username.collectAsState(initial = "")
-    val persistedSeq by settings.lastSeq.collectAsState(initial = 0L)
 
-    Text("Diagnostics", style = MaterialTheme.typography.headlineMedium)
-    Text("Signed in as $username", style = MaterialTheme.typography.bodyMedium)
-
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Line("Service", if (state.running) "running" else "stopped")
-            Line("Socket", if (state.connected) "connected" else "disconnected")
-            Line("State", state.detail)
-            // The crux of the overnight test: a stale heartbeat reveals a
-            // socket the system froze without closing.
-            Line("Last heartbeat", timestamp(state.lastHeartbeat))
-            Line("Heartbeats received", state.heartbeats.toString())
-            Line("Events received", state.events.toString())
-            Line("Last event", state.lastEvent.ifEmpty { "—" })
-            Line("Socket failures", state.failures.toString())
-            Line("Cursor (seq)", persistedSeq.toString())
-            Line("Service started", timestamp(state.startedAt))
-        }
-    }
-
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(onClick = { ConnectionService.start(context) }) { Text("Start") }
-        OutlinedButton(onClick = { ConnectionService.stop(context) }) { Text("Stop") }
-    }
-
-
-    ReliabilityBanner(state)
-
-
-    Spacer(Modifier.height(8.dp))
-    TextButton(onClick = {
-        scope.launch {
-            ConnectionService.stop(context)
-            settings.clear()
-        }
-    }) {
-        Text("Sign out")
-    }
-}
-
-@Composable
-private fun Line(label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, style = MaterialTheme.typography.bodySmall)
-        Text(value, style = MaterialTheme.typography.bodyMedium)
-    }
-}
 
 private val formatter = SimpleDateFormat("MM-dd HH:mm:ss", Locale.ROOT)
 
-private fun timestamp(millis: Long): String =
-    if (millis == 0L) "—" else formatter.format(Date(millis))
 
 /**
  * The caller's channels, with **their** unread count: a message read by one

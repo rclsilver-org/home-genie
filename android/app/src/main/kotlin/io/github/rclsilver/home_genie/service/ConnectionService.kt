@@ -304,7 +304,7 @@ class ConnectionService : LifecycleService() {
     private fun notificationManager(): NotificationManager =
         getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-    /** The observable state, read by the diagnostics screen. */
+    /** The observable state the screens read. */
     data class State(
         val running: Boolean,
         val connected: Boolean,
@@ -359,7 +359,7 @@ class ConnectionService : LifecycleService() {
     companion object {
         private val state = MutableStateFlow(State.stopped())
 
-        /** The service's current state, for the diagnostics screen. */
+        /** The service's current state, for whatever displays it. */
         val observedState: StateFlow<State> = state.asStateFlow()
 
         fun start(context: Context) {

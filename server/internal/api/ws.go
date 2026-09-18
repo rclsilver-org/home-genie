@@ -23,7 +23,7 @@ const (
 	// It is an application-level frame, not a protocol ping, because the app
 	// has to *see* it: a socket the system has silently wedged stays open
 	// as far as the OS is concerned, and only a missing heartbeat reveals
-	// it. The diagnostic screen shows the last one received.
+	// it. The application shows the last one received.
 	heartbeatInterval = 30 * time.Second
 
 	// writeTimeout bounds a single frame. A phone on a bad 4G link must not

@@ -147,7 +147,7 @@ func (h *Hub) PublishAll(events []store.Event) {
 	}
 }
 
-// Subscribers reports how many sockets a user holds, for the diagnostics.
+// Subscribers reports how many sockets a user holds.
 func (h *Hub) Subscribers(userID int64) int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
