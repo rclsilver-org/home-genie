@@ -226,10 +226,13 @@ private fun AlertRow(
         offset.animateTo(if (revealed && actionable) openOffset else 0f)
     }
 
-    // A resolved alert keeps its stripe but loses its colour: the severity was
-    // true while it was running and says nothing about it now.
-    val stripe = if (alert.isOpen) severityColour(alert.severity)
-    else MaterialTheme.colorScheme.outline
+    // A resolved alert keeps its colour. It was neutralised once, on the
+    // reasoning that severity describes what to do now and a closed alert asks
+    // for nothing — which made a history of thirty-seven rows one grey wall
+    // where sixteen criticals read like the two infos beside them. Severity is
+    // a property of what happened, and the closed list is read precisely for
+    // it. What the row is *now* is on the badge.
+    val stripe = severityColour(alert.severity)
     val outline = MaterialTheme.colorScheme.outline
 
     // The height follows the content, and therefore the reader's font size.
