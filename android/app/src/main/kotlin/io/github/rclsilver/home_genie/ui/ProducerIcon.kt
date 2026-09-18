@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
@@ -102,7 +103,7 @@ fun ProducerIcon(
                 Modifier
                     .size(size)
                     .clip(LOGO_SHAPE)
-                    .background(LOGO_GROUND)
+                    .background(logoGround())
                     .padding(4.dp),
                 contentAlignment = Alignment.Center,
             ) {
@@ -147,19 +148,27 @@ private fun DefaultIcon(size: Dp) {
 }
 
 /**
- * The ground every producer's logo is placed on.
+ * The ground a producer's logo sits on.
  *
- * Deliberately not a colour from the scheme, and the same in both themes.
- * Application logos are drawn for a light background — Radarr's is a dark
- * outline around a yellow triangle — so on a dark card the outline vanishes
- * and only the middle survives. Giving each one the ground its designer
- * assumed fixes them all at once, where picking a lighter variant would fix
- * Radarr and wait for the next producer to have the same trouble.
+ * White under the dark theme, because these logos are drawn for a light one:
+ * Radarr's is a dark outline around a yellow triangle, so on a dark card the
+ * outline vanishes and only the middle survives. Giving each the ground its
+ * designer assumed fixes them all at once, where finding a lighter variant
+ * would fix Radarr and wait for the next producer to have the same trouble.
  *
- * Near-white rather than white: pure white against a dark card is a small
- * lamp in the corner of the eye, and these sit beside text one is reading.
+ * Nothing at all under the light theme, where the card already is that
+ * ground. Painting a near-white square there left a pale tile on every row —
+ * it matched neither the read surface nor the unread one, so it read as a
+ * third colour that answered nothing. Transparent is how a pastille says "the
+ * same as whatever is behind me" without having to be told which.
+ *
+ * Read from the resolved scheme rather than from the system setting, so it
+ * follows an explicit Light or Dark chosen in the application too.
  */
-private val LOGO_GROUND = Color(0xFFF2F4F7)
+@Composable
+private fun logoGround(): Color =
+    if (MaterialTheme.colorScheme.surface.luminance() < 0.5f) Color.White
+    else Color.Transparent
 
 /**
  * The shape that ground is cut to: a rounded square, not a circle.
