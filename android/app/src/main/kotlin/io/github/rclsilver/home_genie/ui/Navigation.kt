@@ -14,10 +14,13 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Text
@@ -27,19 +30,65 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 
 /**
- * The application's sections, in menu order.
+ * The application's sections.
  *
- * A drawer rather than two rows of tabs: the alert console already has filters
- * of its own, and two stacked bars make one hesitate about which sorts what.
- * The drawer leaves the screen when it is not in use, which gives the room
- * back to the alerts themselves.
+ * The four one moves between all day sit in a bar at the bottom, always a
+ * thumb away. The overview is not one of them: it is read on arrival and then
+ * left, so it stays in the drawer rather than spending a fifth of the bar to
+ * be visited once.
  */
 enum class Destination(val label: String, val icon: ImageVector) {
     DASHBOARD("Dashboard", Icons.Default.Home),
     ALERTS("Alerts", Icons.Default.Warning),
     NOTIFICATIONS("Notifications", Icons.Default.Notifications),
     CHANNELS("Channels", Icons.Default.List),
-    SETTINGS("Settings", Icons.Default.Settings),
+    SETTINGS("Settings", Icons.Default.Settings);
+
+    companion object {
+        /** What the bottom bar carries, in the order it carries them. */
+        val primary = listOf(ALERTS, NOTIFICATIONS, CHANNELS, SETTINGS)
+    }
+}
+
+/**
+ * The bar at the bottom.
+ *
+ * It shows a count only where there is something to count. A badge at zero is
+ * a permanent badge, and a permanent badge is one the eye learns to skip —
+ * which is the one thing a count on an alert console must never become.
+ *
+ * The drawer keeps every section, this one included. A menu reduced to the
+ * single item the bar does not carry would not be worth opening, and it is
+ * also the only place that says who is signed in.
+ */
+@Composable
+fun BottomBar(
+    current: Destination,
+    open: Int,
+    unread: Int,
+    onSelect: (Destination) -> Unit,
+) {
+    NavigationBar {
+        Destination.primary.forEach { destination ->
+            val count = when (destination) {
+                Destination.ALERTS -> open
+                Destination.NOTIFICATIONS -> unread
+                else -> 0
+            }
+            NavigationBarItem(
+                selected = destination == current,
+                onClick = { onSelect(destination) },
+                icon = {
+                    BadgedBox(badge = {
+                        if (count > 0) Badge { Text(if (count > 99) "99+" else "$count") }
+                    }) {
+                        Icon(destination.icon, contentDescription = null)
+                    }
+                },
+                label = { Text(destination.label) },
+            )
+        }
+    }
 }
 
 /**

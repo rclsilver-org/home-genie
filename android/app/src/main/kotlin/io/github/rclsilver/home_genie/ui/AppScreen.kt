@@ -234,6 +234,24 @@ fun AppScreen(settings: Settings) {
                     },
                 )
             },
+            bottomBar = {
+                // Always there, on nested screens too. Leaving a channel or an
+                // alert is what one does next, and hiding the way out until
+                // the back arrow is found would make the bar come and go
+                // under the thumb.
+                BottomBar(
+                    current = destination,
+                    open = connection.open.total,
+                    unread = unread,
+                ) { selected ->
+                    destination = selected
+                    // Same rule as the drawer: what was opened on top closes,
+                    // or one lands back later on a channel believed left.
+                    openChannel = null
+                    openAlert = null
+                    openMessage = null
+                }
+            },
         ) { padding ->
             Column(
                 modifier = Modifier
