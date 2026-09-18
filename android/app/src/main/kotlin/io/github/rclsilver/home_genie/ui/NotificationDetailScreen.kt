@@ -64,18 +64,17 @@ fun NotificationDetailScreen(message: MessagePayload, serverUrl: String, token: 
     // this screen exists for the rest of it.
     if (message.body.isNotEmpty()) {
         Card(Modifier.fillMaxWidth()) {
-            Text(
-                message.body,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(16.dp),
-            )
+            MessageBody(message.body, Modifier.padding(16.dp))
         }
     }
 
     // The link a producer attached. It has been carried in the payload all
     // along and shown nowhere, so a notification pointing at a film or a
     // dashboard arrived with its destination unreachable.
-    val link = message.clickUrl
+    // The producer's click URL when it set one, otherwise the first address
+    // its body points at. Diun sets no click URL and writes the link into the
+    // text, so the thing it wants followed had nowhere to be pressed.
+    val link = message.clickUrl.ifEmpty { firstLink(message.body) }
     if (link.isNotEmpty()) {
         Button(
             modifier = Modifier.fillMaxWidth(),
@@ -96,3 +95,37 @@ fun NotificationDetailScreen(message: MessagePayload, serverUrl: String, token: 
     }
 }
 
+/**
+ * A message body with its markers understood: bold shown as bold, links as
+ * links one can press.
+ *
+ * Only in the detail. The list strips the same text instead, because there
+ * two lines carry the message and emphasis competes with the words.
+ */
+@Composable
+private fun MessageBody(source: String, modifier: Modifier = Modifier) {
+    val primary = MaterialTheme.colorScheme.primary
+    val rendered = remember(source, primary) {
+        buildAnnotatedString {
+            parseInline(source).forEach { span ->
+                when (span) {
+                    is Span.Plain -> append(span.text)
+                    is Span.Bold ->
+                        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(span.text) }
+                    is Span.Link -> withLink(
+                        LinkAnnotation.Url(
+                            span.url,
+                            TextLinkStyles(
+                                SpanStyle(
+                                    color = primary,
+                                    textDecoration = TextDecoration.Underline,
+                                ),
+                            ),
+                        ),
+                    ) { append(span.text) }
+                }
+            }
+        }
+    }
+    Text(rendered, modifier = modifier, style = MaterialTheme.typography.bodyMedium)
+}

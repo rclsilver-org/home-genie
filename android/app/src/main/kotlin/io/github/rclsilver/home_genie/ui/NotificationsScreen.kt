@@ -287,8 +287,10 @@ private fun NotificationRow(
                     }
 
                     if (message.body.isNotEmpty()) {
+                        // Stripped, not rendered: two lines have to carry the
+                        // message and every bracket spent here is a word lost.
                         Text(
-                            message.body,
+                            plainText(message.body),
                             style = MaterialTheme.typography.bodyMedium,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
