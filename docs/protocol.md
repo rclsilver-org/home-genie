@@ -226,10 +226,12 @@ engine. Verified against a real Alertmanager: three deliveries of the same alert
 single message.
 
 The same fingerprint firing again after a resolution opens a **new** entity, it does
-not resurrect the old one.
+not resurrect the old one. After a manual close this also applies when the source
+reuses the original `startsAt`: the new local occurrence uses a fresh opening time,
+and the manually closed occurrence and its messages remain intact.
 
 The severity drives the priority: `critical` → 5, `warning` → 4, `info` → 2, the rest
-→ 3. A resolution goes out at priority 2 — good news arriving after having woken
+→ 3. A resolution goes out at priority 1 — good news arriving after having woken
 somebody up must not shout.
 
 ### `GET /api/v1/alerts?open=&unacked=&closed=&severity=&limit=`
@@ -242,7 +244,7 @@ what has just been resolved.
 ### `GET /api/v1/alerts/{id}`
 
 The alert and its **timeline**, rebuilt from what is already recorded: opening,
-notifications, reminders, repeats, acknowledgement, resolution. No second log written
+notifications, reminders, repeats, acknowledgement, resolution or manual closure. No second log written
 in parallel — two recordings of the same events would end up diverging, and the one
 consulted at three in the morning must not be the one that drifted.
 
@@ -266,6 +268,24 @@ wrong alert about as often as on the right one, and with no way back one would h
 wait for a reminder the acknowledgement has just removed. The alert resumes its
 cadence without resetting its reminder counter — the numbering is the story of what
 the alert has cost in interruptions.
+
+### `POST /api/v1/alerts/{id}/close`
+
+Closes the occurrence **locally**, including an acknowledged alert. Like acknowledgement,
+it requires a device token and membership of the alert's channel; a non-member receives
+404. Nothing is written to Alertmanager.
+
+Returns the updated alert with `status: "resolved"`, `resolved_at`, and `closed_by`
+(the closer's username, retained as a historical snapshot). Clears the next reminder
+and preserves acknowledgement, messages and counters. The timeline uses `closed`
+with the closer's name, distinguishing manual closure from `resolved` by the source.
+Retrying a close on an already closed alert returns its existing state without another
+message or event; closing an unknown alert returns 404.
+
+Members receive the existing `alert.resolved` event and a quiet `message.new` with
+`alert_resolved: true` and a `Closed —` title, so older clients handle it as a closure too.
+A later `firing` webhook can open a fresh occurrence even with the same fingerprint
+and source start time. A later `resolved` webhook without an open occurrence is ignored.
 
 ## Reminders *(implemented)*
 

@@ -147,12 +147,32 @@ suspend fun markChannelRead(serverUrl: String, token: String, channelId: Long): 
 internal fun String.toRequestBodyJson() = this.toRequestBody(JSON)
 
 /** Acknowledges an alert. Local to the server: nothing goes to Alertmanager. */
-suspend fun ackAlert(serverUrl: String, token: String, alertId: Long): Result<Unit> =
+suspend fun ackAlert(serverUrl: String, token: String, alertId: Long): Result<AlertPayload> =
     withContext(Dispatchers.IO) {
         apiCatching {
             val call = ApiClient.shared.newCall(
                 Request.Builder()
                     .url("${serverUrl.trimEnd('/')}/api/v1/alerts/$alertId/ack")
+                    .post(ByteArray(0).toRequestBody(null))
+                    .header("Authorization", "Bearer $token")
+                    .build()
+            )
+            call.execute().use { response ->
+                if (!response.isSuccessful) throw IOException("HTTP error ${response.code}")
+                Json { ignoreUnknownKeys = true }.decodeFromString(
+                    AlertPayload.serializer(), response.body?.string() ?: throw IOException("Empty response"),
+                )
+            }
+        }
+    }
+
+/** Closes an alert locally; a new source delivery can open another occurrence. */
+suspend fun closeAlert(serverUrl: String, token: String, alertId: Long): Result<Unit> =
+    withContext(Dispatchers.IO) {
+        apiCatching {
+            val call = ApiClient.shared.newCall(
+                Request.Builder()
+                    .url("${serverUrl.trimEnd('/')}/api/v1/alerts/$alertId/close")
                     .post(ByteArray(0).toRequestBody(null))
                     .header("Authorization", "Bearer $token")
                     .build()

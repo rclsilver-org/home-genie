@@ -307,3 +307,38 @@ func TestMigrationsPreserveData(t *testing.T) {
 		}
 	}
 }
+
+func TestManualCloseMigrationPreservesVersionEightAlerts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	handle, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	if err := MigrateTo(handle, path, 8); err != nil {
+		t.Fatal(err)
+	}
+	user := insertUser(t, handle, "member")
+	channel := insertChannel(t, handle, "alerts")
+	if _, err := handle.Exec(`INSERT INTO alerts
+		(id,channel_id,fingerprint,status,started_at,acked_by,acked_at,next_reminder_at,occurrences)
+		VALUES (1,?,'existing','firing',?,?,?, ?,7)`, channel, now(), user, now(), now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handle.Exec(`INSERT INTO messages (channel_id,alert_id,title,created_at)
+		VALUES (?,1,'original notification',?)`, channel, now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(handle, path); err != nil {
+		t.Fatal(err)
+	}
+	var status, closer, sourceStarted, title string
+	var occurrences, ackedBy int
+	if err := handle.QueryRow(`SELECT a.status,a.closed_by,a.source_started_at,a.occurrences,a.acked_by,m.title
+		FROM alerts a JOIN messages m ON m.alert_id=a.id WHERE a.id=1`).Scan(&status, &closer, &sourceStarted, &occurrences, &ackedBy, &title); err != nil {
+		t.Fatal(err)
+	}
+	if status != "firing" || closer != "" || sourceStarted != "" || occurrences != 7 || ackedBy != int(user) || title != "original notification" {
+		t.Fatalf("migration changed existing data: %s %q %d %d %q", status, closer, occurrences, ackedBy, title)
+	}
+}

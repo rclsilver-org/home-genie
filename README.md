@@ -48,6 +48,11 @@ dashboards keep showing what is firing and the phone never writes into the chain
 watching. What stops is the reminders, and the acknowledgement carries the name of
 whoever took it.
 
+It also offers **Close** for an alert whose recovery never arrived: after confirmation,
+the alert moves to Closed, its reminders stop, and its history records who closed it.
+Closing is local too. If the source sends the incident again, it can open a new alert;
+the old closed occurrence stays in history.
+
 ### ntfy, as it already is
 
 The publish format is understood as it comes: the `Title`, `Priority`, `Tags` and

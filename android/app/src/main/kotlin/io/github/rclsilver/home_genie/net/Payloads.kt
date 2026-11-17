@@ -75,6 +75,8 @@ data class AlertPayload(
     @SerialName("started_at") val startedAt: String = "",
     @SerialName("acked_by") val ackedBy: String = "",
     @SerialName("acked_at") val ackedAt: String? = null,
+    @SerialName("resolved_at") val resolvedAt: String? = null,
+    @SerialName("closed_by") val closedBy: String = "",
     // What tells an alert that beats from a stable one.
     val occurrences: Int = 1,
     @SerialName("reminder_count") val reminderCount: Int = 0,

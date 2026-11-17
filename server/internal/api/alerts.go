@@ -53,6 +53,7 @@ type alertPayload struct {
 	GeneratorURL string            `json:"generator_url,omitempty"`
 	StartedAt    time.Time         `json:"started_at"`
 	ResolvedAt   *time.Time        `json:"resolved_at,omitempty"`
+	ClosedBy     string            `json:"closed_by,omitempty"`
 	AckedBy      string            `json:"acked_by,omitempty"`
 	AckedAt      *time.Time        `json:"acked_at,omitempty"`
 	// Occurrences tells an alert that beats from an alert that is stable.
@@ -189,6 +190,9 @@ func (s *Server) announceAlert(channel store.Channel, alert store.Alert, kind st
 	resolved := kind == eventAlertResolved
 	if resolved {
 		title = "Resolved — " + title
+		if alert.ClosedBy != "" {
+			title = "Closed — " + alert.Title()
+		}
 		// A resolution must not shout: it is good news arriving after the
 		// alert already woke somebody. Min and not low, because low is what
 		// an info-severity alert now uses, and that one is meant to be felt.
@@ -400,6 +404,35 @@ func (s *Server) rearmReminder(alert store.Alert) {
 	}
 }
 
+// handleCloseAlert closes an occurrence locally. A fresh firing delivery
+// may open another occurrence; closing never suppresses the source.
+func (s *Server) handleCloseAlert(w http.ResponseWriter, r *http.Request) {
+	user, _ := UserFrom(r.Context())
+	alert, channel, ok := s.alertForMember(w, r)
+	if !ok {
+		return
+	}
+	changed, err := s.store.CloseAlert(alert.ID, user.ID)
+	if err != nil {
+		s.logger.Error("closing the alert", "error", err, "alert_id", alert.ID)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	updated, err := s.store.AlertByID(alert.ID)
+	if err != nil {
+		s.logger.Error("rereading the alert", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if changed {
+		s.logger.Info("alert closed", "alert_id", alert.ID, "by", user.Username)
+		// Reuse the resolved lifecycle so existing clients also remove the
+		// alert from their open list and replace its notification quietly.
+		s.announceAlert(channel, updated, eventAlertResolved)
+	}
+	s.writeJSON(w, http.StatusOK, toAlertPayload(updated, channel.Slug))
+}
+
 func toAlertPayload(alert store.Alert, slug string) alertPayload {
 	return alertPayload{
 		ID: alert.ID, ChannelID: alert.ChannelID, ChannelSlug: slug,
@@ -408,6 +441,7 @@ func toAlertPayload(alert store.Alert, slug string) alertPayload {
 		Labels: alert.Labels, Annotations: alert.Annotations,
 		GeneratorURL: alert.GeneratorURL, StartedAt: alert.StartedAt,
 		ResolvedAt: alert.ResolvedAt, AckedBy: alert.AckedByName, AckedAt: alert.AckedAt,
+		ClosedBy:    alert.ClosedBy,
 		Occurrences: alert.Occurrences, ReminderCount: alert.ReminderCount,
 	}
 }

@@ -91,6 +91,7 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.Handle("GET /api/v1/alerts/top", device(s.handleTopAlertLabels))
 	mux.Handle("GET /api/v1/alerts/{id}", device(s.handleGetAlert))
 	mux.Handle("POST /api/v1/alerts/{id}/ack", device(s.handleAckAlert))
+	mux.Handle("POST /api/v1/alerts/{id}/close", device(s.handleCloseAlert))
 	mux.Handle("DELETE /api/v1/alerts/{id}/ack", device(s.handleUnackAlert))
 
 	mux.Handle("GET /api/v1/channels/{id}/reminders", device(s.handleListReminderPolicies))

@@ -35,6 +35,7 @@ type Alert struct {
 	GeneratorURL   string
 	StartedAt      time.Time
 	ResolvedAt     *time.Time
+	ClosedBy       string
 	AckedBy        *int64
 	AckedByName    string
 	AckedAt        *time.Time
@@ -122,13 +123,43 @@ func (s *Store) CreateAlert(input NewAlert) (Alert, error) {
 		input.StartedAt = s.now()
 	}
 	started := input.StartedAt.UTC().Format(time.RFC3339)
+	sourceStarted := started
+	// A manual close ends this local occurrence. If the source delivers the
+	// same incident again, retain the closed row and give the new occurrence
+	// a local opening time instead of colliding with its source timestamp.
+	var localOccurrence bool
+	err = s.db.QueryRow(`SELECT EXISTS (
+		SELECT 1 FROM alerts WHERE channel_id = ? AND fingerprint = ?
+		AND started_at = ? AND status = ?
+		AND (closed_by <> '' OR (source_started_at <> '' AND source_started_at <> started_at)))`,
+		input.ChannelID, input.Fingerprint, started, AlertResolved).Scan(&localOccurrence)
+	if err != nil {
+		return Alert{}, fmt.Errorf("reading previous closures: %w", err)
+	}
+	if localOccurrence {
+		var latest string
+		if err := s.db.QueryRow(`SELECT started_at FROM alerts
+			WHERE channel_id = ? AND fingerprint = ? ORDER BY started_at DESC LIMIT 1`,
+			input.ChannelID, input.Fingerprint).Scan(&latest); err != nil {
+			return Alert{}, fmt.Errorf("reading the last occurrence: %w", err)
+		}
+		at := s.now().UTC().Truncate(time.Second)
+		previous, err := parseTime(latest)
+		if err != nil {
+			return Alert{}, fmt.Errorf("reading the last opening time: %w", err)
+		}
+		if !at.After(previous) {
+			at = previous.Add(time.Second)
+		}
+		started = at.Format(time.RFC3339)
+	}
 
 	result, err := s.db.Exec(
 		`INSERT INTO alerts (channel_id, fingerprint, status, severity, labels,
-		                     annotations, generator_url, started_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		                     annotations, generator_url, started_at, source_started_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		input.ChannelID, input.Fingerprint, AlertFiring, input.Severity,
-		string(labels), string(annotations), input.GeneratorURL, started)
+		string(labels), string(annotations), input.GeneratorURL, started, sourceStarted)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return Alert{}, ErrConflict
@@ -168,7 +199,7 @@ func (s *Store) ResolveAlert(id int64, at time.Time) error {
 		at = s.now()
 	}
 	result, err := s.db.Exec(
-		`UPDATE alerts SET status = ?, resolved_at = ?, next_reminder_at = NULL
+		`UPDATE alerts SET status = ?, resolved_at = MAX(?, started_at), next_reminder_at = NULL
 		  WHERE id = ? AND status = ?`,
 		AlertResolved, at.UTC().Format(time.RFC3339), id, AlertFiring)
 	if err != nil {
@@ -179,6 +210,20 @@ func (s *Store) ResolveAlert(id int64, at time.Time) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// CloseAlert ends an occurrence locally without changing its monitoring source.
+// The conditional update makes retries and competing closers harmless.
+func (s *Store) CloseAlert(id, userID int64) (bool, error) {
+	result, err := s.db.Exec(`UPDATE alerts
+		SET status = ?, resolved_at = MAX(?, started_at), closed_by = (SELECT username FROM users WHERE id = ?),
+		    next_reminder_at = NULL
+		WHERE id = ? AND status = ?`, AlertResolved, s.timestamp(), userID, id, AlertFiring)
+	if err != nil {
+		return false, fmt.Errorf("closing the alert: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	return changed > 0, err
 }
 
 // AckAlert records who took the alert and stops its reminders. It never
@@ -262,7 +307,7 @@ const alertColumns = `
 	SELECT a.id, a.channel_id, a.fingerprint, a.status, a.severity, a.labels,
 	       a.annotations, a.generator_url, a.started_at, a.resolved_at,
 	       a.acked_by, IFNULL(u.username, ''), a.acked_at,
-	       a.reminder_count, a.next_reminder_at, a.occurrences
+	       a.reminder_count, a.next_reminder_at, a.occurrences, a.closed_by
 	  FROM alerts a
 	  LEFT JOIN users u ON u.id = a.acked_by`
 
@@ -289,7 +334,7 @@ func scanAlertRow(row rowScanner) (Alert, error) {
 	err := row.Scan(&alert.ID, &alert.ChannelID, &alert.Fingerprint, &alert.Status,
 		&alert.Severity, &labels, &annotations, &alert.GeneratorURL, &started,
 		&resolved, &ackedBy, &alert.AckedByName, &ackedAt,
-		&alert.ReminderCount, &nextAt, &alert.Occurrences)
+		&alert.ReminderCount, &nextAt, &alert.Occurrences, &alert.ClosedBy)
 	if err != nil {
 		return Alert{}, err
 	}
@@ -397,6 +442,7 @@ const (
 	AlertLogRepeated = "repeated"
 	AlertLogAcked    = "acked"
 	AlertLogResolved = "resolved"
+	AlertLogClosed   = "closed"
 )
 
 // LogOf builds an alert's history from what is already recorded, rather than
@@ -439,7 +485,10 @@ func (s *Store) LogOf(alert Alert) ([]AlertLogEntry, error) {
 	// showed the closure twice — once as a reminder that never fired, once as
 	// the closure — and made it look as though a closed alert kept insisting.
 	if alert.ResolvedAt != nil && len(messages) > 0 {
-		messages = messages[:len(messages)-1]
+		last := messages[len(messages)-1].title
+		if last == "Resolved — "+alert.Title() || last == "Closed — "+alert.Title() {
+			messages = messages[:len(messages)-1]
+		}
 	}
 
 	for i, m := range messages {
@@ -467,8 +516,12 @@ func (s *Store) LogOf(alert Alert) ([]AlertLogEntry, error) {
 		})
 	}
 	if alert.ResolvedAt != nil {
+		kind, detail := AlertLogResolved, "by Alertmanager"
+		if alert.ClosedBy != "" {
+			kind, detail = AlertLogClosed, "by "+alert.ClosedBy
+		}
 		entries = append(entries, AlertLogEntry{
-			At: *alert.ResolvedAt, Kind: AlertLogResolved, Detail: "by Alertmanager",
+			At: *alert.ResolvedAt, Kind: kind, Detail: detail,
 		})
 	}
 

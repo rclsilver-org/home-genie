@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -31,6 +33,7 @@ import kotlinx.coroutines.launch
 import io.github.rclsilver.home_genie.net.AlertDetailPayload
 import io.github.rclsilver.home_genie.net.AlertLogEntryPayload
 import io.github.rclsilver.home_genie.net.ackAlert
+import io.github.rclsilver.home_genie.net.closeAlert
 import io.github.rclsilver.home_genie.net.fetchAlertDetail
 import io.github.rclsilver.home_genie.net.unackAlert
 import io.github.rclsilver.home_genie.service.ConnectionService
@@ -50,6 +53,24 @@ fun AlertDetailScreen(serverUrl: String, token: String, alertId: Long) {
     var error by remember { mutableStateOf("") }
     var tab by remember { mutableStateOf(0) }
     var reloads by remember { mutableStateOf(0) }
+    var pending by remember(alertId) { mutableStateOf(false) }
+    var confirmClose by remember(alertId) { mutableStateOf(false) }
+    var actionError by remember(alertId) { mutableStateOf("") }
+
+    fun perform(action: suspend () -> Result<Unit>) {
+        if (pending) return
+        pending = true
+        actionError = ""
+        scope.launch {
+            try {
+                action()
+                    .onSuccess { reloads++ }
+                    .onFailure { actionError = "Could not update alert: ${it.message}. Try again." }
+            } finally {
+                pending = false
+            }
+        }
+    }
 
     // The timeline has to follow the life of the alert: a reminder sent while
     // the screen is open must show up without leaving and coming back.
@@ -70,6 +91,10 @@ fun AlertDetailScreen(serverUrl: String, token: String, alertId: Long) {
         return
     }
     val alert = payload.alert
+
+    if (actionError.isNotEmpty()) {
+        Text(actionError, color = MaterialTheme.colorScheme.error)
+    }
 
     // The title first and large: on this screen one already knows which alert
     // was opened, so the badges no longer have to introduce it.
@@ -97,6 +122,15 @@ fun AlertDetailScreen(serverUrl: String, token: String, alertId: Long) {
         },
         style = MaterialTheme.typography.bodySmall,
     )
+
+    if (!alert.isOpen && alert.resolvedAt != null) {
+        Text(
+            if (alert.closedBy.isNotEmpty())
+                "Closed by ${alert.closedBy} · ${relativeAge(alert.resolvedAt)}"
+            else "Resolved by source · ${relativeAge(alert.resolvedAt)}",
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
 
     // On one alert there is no list to compare against, so nothing is
     // hidden: every label shows, including the ones the list drops for
@@ -132,18 +166,48 @@ fun AlertDetailScreen(serverUrl: String, token: String, alertId: Long) {
             // Hand the alert back to nobody: it resumes its reminder cadence.
             OutlinedButton(
                 modifier = Modifier.fillMaxWidth(),
+                enabled = !pending,
                 onClick = {
-                    scope.launch { unackAlert(serverUrl, token, alert.id).onSuccess { reloads++ } }
+                    perform { unackAlert(serverUrl, token, alert.id) }
                 },
             ) { Text("Un-acknowledge") }
         } else {
             Button(
                 modifier = Modifier.fillMaxWidth(),
+                enabled = !pending,
                 onClick = {
-                    scope.launch { ackAlert(serverUrl, token, alert.id).onSuccess { reloads++ } }
+                    perform { ackAlert(serverUrl, token, alert.id).map { Unit } }
                 },
             ) { Text("Acknowledge") }
         }
+        OutlinedButton(
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !pending,
+            onClick = { confirmClose = true },
+        ) { Text("Close") }
+    }
+
+    if (confirmClose && alert.isOpen) {
+        AlertDialog(
+            onDismissRequest = { confirmClose = false },
+            title = { Text("Close alert?") },
+            text = {
+                Text("This closes the alert in Home Genie and stops its reminders. " +
+                    "It may appear again if the source sends it again.")
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !pending,
+                    onClick = {
+                        confirmClose = false
+                        perform { closeAlert(serverUrl, token, alert.id) }
+                    },
+                ) { Text("Close alert") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClose = false }) { Text("Cancel") }
+            },
+        )
     }
 
     TabRow(selectedTabIndex = tab) {
@@ -262,5 +326,6 @@ private fun logTitle(kind: String): String = when (kind) {
     "repeated" -> "Alert repeated"
     "acked" -> "Acknowledged"
     "resolved" -> "Resolved"
+    "closed" -> "Closed manually"
     else -> kind
 }
