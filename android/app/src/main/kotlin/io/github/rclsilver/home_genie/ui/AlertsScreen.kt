@@ -22,7 +22,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
@@ -44,7 +43,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -52,7 +54,6 @@ import androidx.compose.ui.unit.IntOffset
 import io.github.rclsilver.home_genie.net.ackAlert
 import io.github.rclsilver.home_genie.net.AlertPayload
 import io.github.rclsilver.home_genie.net.fetchAlertsFiltered
-import io.github.rclsilver.home_genie.net.unackAlert
 import io.github.rclsilver.home_genie.service.ConnectionService
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -93,15 +94,13 @@ fun AlertsScreen(serverUrl: String, token: String, onOpen: (AlertPayload) -> Uni
     var all by remember { mutableStateOf<List<AlertPayload>>(emptyList()) }
     var capped by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
-    var reloads by remember { mutableStateOf(0) }
-    // The row whose drawer is open, if there is one.
-    var revealed by remember { mutableStateOf<Long?>(null) }
+    var pending by remember { mutableStateOf<Set<Long>>(emptySet()) }
 
     val state by ConnectionService.observedState.collectAsState()
     // One fetch for every tab, where there used to be one per tab. Switching
     // is instant, and each tab can say how much it holds without a round trip
     // nobody would wait for.
-    LaunchedEffect(state.events, reloads) {
+    LaunchedEffect(state.events) {
         fetchAlertsFiltered(serverUrl, token, limit = LIST_LIMIT)
             .onSuccess { all = it; capped = it.size >= LIST_LIMIT; error = "" }
             .onFailure { error = it.message ?: "loading failed" }
@@ -158,40 +157,36 @@ fun AlertsScreen(serverUrl: String, token: String, onOpen: (AlertPayload) -> Uni
     val facets = facetsOf(alerts)
 
     alerts.forEach { alert ->
-        // Keyed by alert: without it, an alert leaving the list would
-        // bequeath its open drawer to whichever takes its place.
+        // Keep each row's animation attached to its alert as the list changes.
         key(alert.id) {
             AlertRow(
                 alert = alert,
                 facets = facets,
-                // One drawer open at a time: two gaping rows make one lose
-                // track of which one was about to be acknowledged.
-                revealed = revealed == alert.id,
-                onReveal = { revealed = if (it) alert.id else null },
-                onOpen = { revealed = null; onOpen(alert) },
+                busy = alert.id in pending,
+                onOpen = { onOpen(alert) },
                 onAck = {
-                    revealed = null
-                    scope.launch { ackAlert(serverUrl, token, alert.id).onSuccess { reloads++ } }
-                },
-                onUnack = {
-                    revealed = null
-                    scope.launch {
-                        unackAlert(serverUrl, token, alert.id).onSuccess { reloads++ }
+                    if (alert.id !in pending) {
+                        pending = pending + alert.id
+                        scope.launch {
+                            try {
+                                ackAlert(serverUrl, token, alert.id)
+                                    .onSuccess { updated ->
+                                        all = all.map {
+                                            if (it.id == alert.id) updated.copy(channelSlug = it.channelSlug) else it
+                                        }
+                                        error = ""
+                                    }
+                                    .onFailure { error = "Could not acknowledge alert: ${it.message}. Try again." }
+                            } finally {
+                                pending = pending - alert.id
+                            }
+                        }
                     }
                 },
             )
         }
     }
 }
-
-/**
- * The width of the drawer revealed by the swipe.
- *
- * Sized for a real button rather than a line of text. A tappable label with
- * no edges reads as a link, and a link in a row one has just dragged open
- * does not look like the thing that was being reached for.
- */
-private val ACTION_WIDTH = 94.dp
 
 /**
  * One alert in the console.
@@ -201,29 +196,24 @@ private val ACTION_WIDTH = 94.dp
  * counts alerts at a glance without reading them. What does not fit is cut
  * — the detail is one tap away.
  *
- * The buttons are not in the row: they appear when it is swiped to the
- * left. They took permanent space for a rare gesture, and worse, they
- * shifted everything below depending on whether the alert was taken.
+ * A left swipe acknowledges on release. The action behind the row is a
+ * preview, not a second button to press. Undo remains in the detail screen.
  */
 @Composable
 private fun AlertRow(
     alert: AlertPayload,
     facets: Facets,
-    revealed: Boolean,
-    onReveal: (Boolean) -> Unit,
+    busy: Boolean,
     onOpen: () -> Unit,
     onAck: () -> Unit,
-    onUnack: () -> Unit,
 ) {
-    // A resolved alert has no drawer: there is nothing left to do to it.
-    val actionable = alert.isOpen
+    val actionable = alert.isOpen && !alert.isAcked && !busy
     val drag = rememberCoroutineScope()
-    val density = LocalDensity.current
-    val openOffset = with(density) { -ACTION_WIDTH.toPx() }
     val offset = remember { Animatable(0f) }
+    var width by remember { mutableStateOf(0f) }
 
-    LaunchedEffect(revealed, actionable) {
-        offset.animateTo(if (revealed && actionable) openOffset else 0f)
+    LaunchedEffect(actionable) {
+        if (!actionable) offset.animateTo(0f)
     }
 
     // A resolved alert keeps its colour. It was neutralised once, on the
@@ -245,6 +235,7 @@ private fun AlertRow(
         Modifier
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
+            .onSizeChanged { width = it.width.toFloat() }
             // The rounded corners and the outline belong to the row, not to
             // the card sliding inside it. Giving each of them its own shape
             // meant two shapes had to agree on where the row ended, and for
@@ -266,30 +257,19 @@ private fun AlertRow(
                 )
             }
     ) {
-        if (actionable) {
-            // Square: the parent clip rounds whatever reaches the row's edge,
-            // so the panel never has to guess which of its corners show.
-            Surface(
-                onClick = if (alert.isAcked) onUnack else onAck,
+        if (alert.isOpen && !alert.isAcked) {
+            Box(
                 modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .width(ACTION_WIDTH)
-                    .fillMaxHeight(),
-                shape = RectangleShape,
-                // The same grey as the TAKEN badge: once an alert is taken,
-                // that colour is what says so, here as on the row. Taking is
-                // the offer, undoing a way back — one calls, the other waits.
-                color = if (alert.isAcked) MaterialTheme.colorScheme.secondary
-                else MaterialTheme.colorScheme.primary,
+                    .matchParentSize()
+                    .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.CenterEnd,
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        if (alert.isAcked) "Unack" else "Ack",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = if (alert.isAcked) MaterialTheme.colorScheme.onSecondary
-                        else MaterialTheme.colorScheme.onPrimary,
-                    )
-                }
+                Text(
+                    if (busy) "Acknowledging…" else "Ack",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.padding(end = 24.dp),
+                )
             }
         }
 
@@ -297,30 +277,30 @@ private fun AlertRow(
             modifier = Modifier
                 .fillMaxSize()
                 .offset { IntOffset(offset.value.roundToInt(), 0) }
-                .pointerInput(actionable) {
+                .semantics {
+                    if (actionable) customActions = listOf(
+                        CustomAccessibilityAction("Acknowledge") { onAck(); true }
+                    )
+                }
+                .pointerInput(alert.id, actionable, width) {
                     if (!actionable) return@pointerInput
+                    var distance = 0f
                     detectHorizontalDragGestures(
+                        onDragStart = { distance = 0f },
                         onHorizontalDrag = { change, delta ->
                             change.consume()
-                            // Follow the finger without animation: a drawer
-                            // trailing behind the hand does not feel pulled,
-                            // it feels broken.
+                            distance = (distance + delta).coerceIn(-width, 0f)
+                            val target = distance
                             drag.launch {
-                                offset.snapTo(
-                                    (offset.value + delta).coerceIn(openOffset, 0f)
-                                )
+                                offset.snapTo(target)
                             }
                         },
                         onDragEnd = {
-                            val open = offset.value < openOffset / 2
-                            onReveal(open)
-                            // Finish the gesture here and not only by telling
-                            // the parent: releasing without changing state
-                            // would leave the card where the finger left it.
-                            drag.launch {
-                                offset.animateTo(if (open) openOffset else 0f)
-                            }
+                            val acknowledge = shouldAcknowledgeAlertSwipe(distance, width)
+                            drag.launch { offset.animateTo(0f) }
+                            if (acknowledge) onAck()
                         },
+                        onDragCancel = { drag.launch { offset.animateTo(0f) } },
                     )
                 },
             colors = CardDefaults.cardColors(
@@ -328,7 +308,7 @@ private fun AlertRow(
             ),
             // Square, and with no border of its own. Both are the row's job.
             shape = RectangleShape,
-            onClick = { if (revealed) onReveal(false) else onOpen() },
+            onClick = onOpen,
         ) {
             Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
                 // Severity as a stripe rather than a fill. Eight open alerts
